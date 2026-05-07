@@ -56,6 +56,13 @@ enum class PlayerDisplayMode(
     }
 }
 
+private enum class QualityState {
+    GOOD,
+    WARNING,
+    ERROR,
+    NEUTRAL
+}
+
 class PlayerActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private val progressTick = object : Runnable {
@@ -78,6 +85,7 @@ class PlayerActivity : Activity() {
     private lateinit var timeView: TextView
     private lateinit var playerHintView: TextView
     private lateinit var playPauseButton: Button
+    private lateinit var qualityButton: Button
     private lateinit var displayModeButton: Button
     private lateinit var seekBar: SeekBar
     private lateinit var stateStore: AppStateStore
@@ -95,6 +103,7 @@ class PlayerActivity : Activity() {
     private var displayMode = PlayerDisplayMode.ADAPT
     private var playbackStarted = false
     private var lastBufferingPercent = 0f
+    private var lastPlaybackIssue = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -199,6 +208,10 @@ class PlayerActivity : Activity() {
             setTextColor(Color.WHITE)
             textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
+            setSingleLine(true)
+        }
+        qualityButton = panelButton("Qualité").apply {
+            minWidth = dp(118)
         }
         tamponStatusView = TextView(this).apply {
             setTextColor(0xFFC9C6E4.toInt())
@@ -247,7 +260,15 @@ class PlayerActivity : Activity() {
             })
         }
 
-        bottomBar.addView(statusView)
+        val statusRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(statusView, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(qualityButton, LinearLayout.LayoutParams(dp(132), dp(42)).apply {
+                setMargins(dp(12), 0, 0, 0)
+            })
+        }
+        bottomBar.addView(statusRow)
         bottomBar.addView(tamponStatusView)
         bottomBar.addView(seekBar, LinearLayout.LayoutParams(-1, dp(42)))
         bottomBar.addView(timeView)
@@ -265,6 +286,7 @@ class PlayerActivity : Activity() {
         subtitles.setOnClickListener { showTrackDialog(false) }
         displayModeButton.setOnClickListener { cycleDisplayMode() }
         info.setOnClickListener { showInfoDialog() }
+        qualityButton.setOnClickListener { showQualityPanel() }
         beginning.setOnClickListener { playFromBeginning() }
         retry.setOnClickListener { restartPlayback(true) }
         close.setOnClickListener { finish() }
@@ -424,9 +446,11 @@ class PlayerActivity : Activity() {
     private fun startPlayback() {
         releasePlayer()
         statusView.text = "Chargement VLC..."
+        updateQualitySummary("Connexion", QualityState.NEUTRAL)
         timeView.text = ""
         playbackStarted = false
         lastBufferingPercent = 0f
+        lastPlaybackIssue = ""
         val bufferMs = stateStore.playerBufferMs()
 
         val options = arrayListOf(
@@ -503,10 +527,12 @@ class PlayerActivity : Activity() {
                     applyDisplayMode(false)
                     statusView.text = playbackStatus()
                     updateTamponStatus()
+                    updateQualitySummary(compactQualityText(), QualityState.GOOD)
                     playPauseButton.text = "Pause"
                 }
                 MediaPlayer.Event.Paused -> {
                     statusView.text = "Pause"
+                    updateQualitySummary("Pause", QualityState.NEUTRAL)
                     playPauseButton.text = "Lire"
                     showControlsTemporarily()
                 }
@@ -514,12 +540,15 @@ class PlayerActivity : Activity() {
                     lastBufferingPercent = event.buffering
                     if (event.buffering in 1f..98.9f) {
                         statusView.text = String.format(Locale.US, "Chargement %.0f%%", event.buffering)
+                        updateQualitySummary(String.format(Locale.US, "Buffer %.0f%%", event.buffering), QualityState.WARNING)
                     } else if (player?.isPlaying == true) {
                         statusView.text = playbackStatus()
+                        updateQualitySummary(compactQualityText(), QualityState.GOOD)
                     }
                 }
                 MediaPlayer.Event.EndReached -> {
                     statusView.text = "Lecture terminee"
+                    updateQualitySummary("Terminé", QualityState.NEUTRAL)
                     playPauseButton.text = "Lire"
                     setControlsVisible(true)
                     releaseBufferedPlayback()
@@ -532,7 +561,12 @@ class PlayerActivity : Activity() {
                     releaseBufferedPlayback()
                     releaseRemoteGuard()
                     val message = playbackErrorMessage()
+                    lastPlaybackIssue = message
                     statusView.text = message
+                    updateQualitySummary("Erreur flux", QualityState.ERROR)
+                    if (::playerHintView.isInitialized) {
+                        playerHintView.text = playbackErrorHint()
+                    }
                     Toast.makeText(this, message, Toast.LENGTH_LONG).show()
                 }
                 MediaPlayer.Event.ESAdded,
@@ -540,6 +574,7 @@ class PlayerActivity : Activity() {
                 MediaPlayer.Event.ESSelected -> {
                     ensureAudioTrack()
                     statusView.text = playbackStatus()
+                    updateQualitySummary(compactQualityText(), QualityState.GOOD)
                 }
                 MediaPlayer.Event.TimeChanged,
                 MediaPlayer.Event.PositionChanged,
@@ -723,20 +758,60 @@ class PlayerActivity : Activity() {
         showPremiumTextDialog("Diagnostic qualité", message.toString())
     }
 
+    private fun showQualityPanel() {
+        val message = StringBuilder()
+        message.append("Résumé\n")
+            .append("Etat: ").append(if (lastPlaybackIssue.isBlank()) playbackStatus().ifBlank { "chargement" } else lastPlaybackIssue).append("\n")
+            .append("Buffer: ").append(stateStore.playerBufferMs()).append(" ms\n")
+            .append("Affichage: ").append(displayMode.label).append("\n")
+            .append("Déplacement: ").append(if (canSeekPlayback()) "actif" else "attente tampon complet").append("\n")
+        player?.currentVideoTrack?.let { track ->
+            message.append("Vidéo: ")
+                .append(track.width)
+                .append("x")
+                .append(track.height)
+                .append(" ")
+                .append(codecLabel(track.codec))
+                .append("\n")
+        }
+        selectedTrack(player?.audioTracks, player?.audioTrack ?: -1)?.let { track ->
+            message.append("Audio: ").append(track.name).append("\n")
+        }
+        if (preloadProxy) {
+            val tampon = PreloadStreamServer.status()
+            message.append("\nTampon\n")
+                .append("Avance: ").append(formatBytes(tampon.aheadBytes)).append("\n")
+                .append("Téléchargé: ").append(formatBytes(tampon.downloadedBytes)).append(totalSuffix(tampon.totalBytes)).append("\n")
+                .append("Seek: ").append(if (tampon.complete) "actif" else "désactivé temporairement").append("\n")
+        }
+        if (lastPlaybackIssue.isNotBlank()) {
+            message.append("\nAction conseillée\n").append(playbackErrorHint()).append("\n")
+        }
+        showPremiumTextDialog("Qualité du flux", message.toString(), compact = true)
+    }
+
     private fun playbackErrorMessage(): String {
         val tamponError = if (preloadProxy) PreloadStreamServer.status().errorMessage else null
         return when {
             tamponError != null -> "Tampon interrompu: $tamponError"
             preloadProxy && !PreloadStreamServer.status().complete ->
-                "Lecture tampon instable: le cache local n'a pas fourni assez de données."
+                "Tampon insuffisant: le cache local n'a pas encore assez de données."
             !playbackStarted && lastBufferingPercent <= 0f ->
-                "Lecture impossible: aucune donnée reçue. Réseau, VPN ou flux refusé probable."
+                "Flux indisponible: aucune donnée reçue."
             !playbackStarted ->
-                "Lecture impossible: flux refusé ou format non accepté par VLC."
+                "Lecture impossible: flux refusé ou format non accepté."
             else ->
                 "Lecture interrompue: réseau instable, codec non supporté ou flux coupé."
         }
     }
+
+    private fun playbackErrorHint(): String =
+        when {
+            preloadProxy -> "Attends un tampon plus avancé, ou convertis en téléchargement complet si le réseau est lent."
+            !usedFallback && !fallbackStreamUrl.isNullOrBlank() -> "Essaie Relancer: l'app peut tenter le format alternatif du flux."
+            isRemotePlaybackUrl(streamUrl) -> "Vérifie VPN/débit, puis essaie Relancer. Si le flux refuse VLC, tente Télécharger ou Tamponner depuis la fiche."
+            else -> "Le fichier local peut être incomplet ou illisible. Supprime-le puis relance un téléchargement si besoin."
+        }
 
     private fun appendTracks(
         message: StringBuilder,
@@ -825,6 +900,9 @@ class PlayerActivity : Activity() {
             seekBar.progress = 0
         }
         updateTamponStatus()
+        if (lastPlaybackIssue.isBlank() && currentPlayer.isPlaying) {
+            updateQualitySummary(compactQualityText(), QualityState.GOOD)
+        }
         updateTimeLabel(seekBar.progress)
     }
 
@@ -855,6 +933,11 @@ class PlayerActivity : Activity() {
                 "Conversion en téléchargement: ${formatBytes(status.downloadedBytes)}${totalSuffix(status.totalBytes)}"
             else ->
                 "Tampon: ${formatBytes(status.aheadBytes)} d'avance - seek désactivé tant que le fichier est incomplet"
+        }
+        when {
+            status.errorMessage != null -> updateQualitySummary("Erreur tampon", QualityState.ERROR)
+            status.complete -> updateQualitySummary("Tampon OK", QualityState.GOOD)
+            status.aheadBytes > 0L -> updateQualitySummary("Tampon ${formatBytes(status.aheadBytes)}", QualityState.WARNING)
         }
         if (::playerHintView.isInitialized) {
             playerHintView.text = if (status.complete) {
@@ -905,6 +988,18 @@ class PlayerActivity : Activity() {
         } else {
             "OK pause/lecture • ↑ boutons • ↓ barre • ←/→ 10s • avance rapide 30s • Retour masque"
         }
+
+    private fun compactQualityText(): String {
+        val track = player?.currentVideoTrack
+        return when {
+            lastPlaybackIssue.isNotBlank() -> "Erreur flux"
+            preloadProxy && !PreloadStreamServer.isComplete() -> "Tampon actif"
+            track != null && track.width > 0 && track.height > 0 -> "${track.width}p"
+            playbackStarted -> "Flux OK"
+            lastBufferingPercent > 0f -> String.format(Locale.US, "Buffer %.0f%%", lastBufferingPercent)
+            else -> "Qualité"
+        }
+    }
 
     private fun focusAdjacentTopButton(direction: Int) {
         if (topControlButtons.isEmpty()) {
@@ -1004,7 +1099,22 @@ class PlayerActivity : Activity() {
             background = roundStroke(PANEL, dp(10), STROKE, dp(1))
         }
 
-    private fun showPremiumTextDialog(title: String, message: String) {
+    private fun updateQualitySummary(label: String, state: QualityState) {
+        if (!::qualityButton.isInitialized) {
+            return
+        }
+        qualityButton.text = label
+        val stroke = when (state) {
+            QualityState.GOOD -> ACCENT_2
+            QualityState.WARNING -> ACCENT_FOCUS
+            QualityState.ERROR -> ERROR_ACCENT
+            QualityState.NEUTRAL -> STROKE
+        }
+        qualityButton.background = roundStroke(PANEL, dp(10), stroke, dp(if (state == QualityState.NEUTRAL) 1 else 2))
+        qualityButton.setTextColor(if (state == QualityState.ERROR) ERROR_TEXT else Color.WHITE)
+    }
+
+    private fun showPremiumTextDialog(title: String, message: String, compact: Boolean = false) {
         val dialog = AlertDialog.Builder(this).create()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1028,7 +1138,7 @@ class PlayerActivity : Activity() {
         dialog.setView(root)
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-            dialog.window?.setLayout(dp(620), dp(560))
+            dialog.window?.setLayout(dp(if (compact) 520 else 620), dp(if (compact) 440 else 560))
         }
         dialog.show()
     }
@@ -1113,6 +1223,8 @@ class PlayerActivity : Activity() {
         private val PLAYER_CHROME = Color.argb(218, 12, 14, 28)
         private val ACCENT_2 = Color.rgb(71, 211, 194)
         private val ACCENT_FOCUS = Color.rgb(255, 209, 102)
+        private val ERROR_ACCENT = Color.rgb(255, 138, 154)
+        private val ERROR_TEXT = Color.rgb(255, 197, 205)
         private val STROKE = Color.rgb(51, 54, 86)
     }
 }

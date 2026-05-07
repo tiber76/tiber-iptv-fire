@@ -78,7 +78,7 @@ class AppStateStore(context: Context) {
         favorites().map { item -> item.key() }.toSet()
 
     fun resumePosition(item: XtreamModels.StreamItem): Long =
-        preferences.getLong(KEY_PREFIX_RESUME + item.key(), 0L)
+        resumePosition(item.key())
 
     fun resumePosition(key: String?): Long {
         if (key.isNullOrEmpty()) {
@@ -88,9 +88,19 @@ class AppStateStore(context: Context) {
         return position ?: preferences.getLong(KEY_PREFIX_RESUME + key, 0L)
     }
 
-    fun saveResume(key: String?, positionMs: Long) {
+    fun resumeDuration(key: String?): Long {
+        if (key.isNullOrEmpty()) {
+            return 0L
+        }
+        return preferences.getLong(KEY_PREFIX_RESUME_DURATION + key, 0L)
+    }
+
+    fun saveResume(key: String?, positionMs: Long, durationMs: Long = 0L) {
         if (key.isNullOrEmpty()) {
             return
+        }
+        if (durationMs > 0L) {
+            preferences.edit().putLong(KEY_PREFIX_RESUME_DURATION + key, durationMs).apply()
         }
         if (positionMs > 10_000L) {
             dao.upsertResume(
@@ -102,6 +112,7 @@ class AppStateStore(context: Context) {
             )
         } else {
             dao.deleteResume(key)
+            preferences.edit().remove(KEY_PREFIX_RESUME_DURATION + key).apply()
         }
     }
 
@@ -324,6 +335,7 @@ class AppStateStore(context: Context) {
         private const val KEY_PLAYER_DISPLAY_MODE = "player_display_mode"
         private const val KEY_PREFIX_ITEM = "item_"
         private const val KEY_PREFIX_RESUME = "resume_"
+        private const val KEY_PREFIX_RESUME_DURATION = "resume_duration_"
         private const val KEY_PREFIX_ROWS = "rows_"
         private const val KEY_PREFIX_ROWS_TIME = "rows_time_"
         private val CATALOG_SCOPES = arrayOf("LIVE", "MOVIES", "SERIES")

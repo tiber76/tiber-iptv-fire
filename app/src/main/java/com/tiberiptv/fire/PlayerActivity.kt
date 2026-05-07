@@ -17,6 +17,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
@@ -72,6 +73,7 @@ class PlayerActivity : Activity() {
     private lateinit var statusView: TextView
     private lateinit var tamponStatusView: TextView
     private lateinit var timeView: TextView
+    private lateinit var playerHintView: TextView
     private lateinit var playPauseButton: Button
     private lateinit var displayModeButton: Button
     private lateinit var seekBar: SeekBar
@@ -131,8 +133,9 @@ class PlayerActivity : Activity() {
         topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), dp(14), dp(20), dp(14))
-            setBackgroundColor(0xCC070812.toInt())
+            setPadding(dp(18), dp(12), dp(14), dp(12))
+            background = roundStroke(PLAYER_CHROME, dp(16), STROKE, dp(1))
+            elevation = dp(10).toFloat()
         }
 
         val titleView = TextView(this).apply {
@@ -141,7 +144,7 @@ class PlayerActivity : Activity() {
             textSize = 18f
             typeface = Typeface.DEFAULT_BOLD
             setSingleLine(true)
-            setPadding(0, 0, dp(18), 0)
+            setPadding(0, 0, dp(14), 0)
         }
 
         playPauseButton = controlButton("Pause")
@@ -155,21 +158,38 @@ class PlayerActivity : Activity() {
         topControlButtons.clear()
         topControlButtons.addAll(listOf(playPauseButton, audio, subtitles, displayModeButton, info, beginning, retry, close))
 
-        topBar.addView(titleView, LinearLayout.LayoutParams(0, -2, 1f))
-        topBar.addView(playPauseButton, buttonMargin())
-        topBar.addView(audio, buttonMargin())
-        topBar.addView(subtitles, buttonMargin())
-        topBar.addView(displayModeButton, buttonMargin())
-        topBar.addView(info, buttonMargin())
-        topBar.addView(beginning, buttonMargin())
-        topBar.addView(retry, buttonMargin())
-        topBar.addView(close, buttonMargin())
-        root.addView(topBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+        topBar.addView(titleView, LinearLayout.LayoutParams(0, -2, 0.42f))
+        val buttonRail = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(playPauseButton, buttonMargin())
+            addView(audio, buttonMargin())
+            addView(subtitles, buttonMargin())
+            addView(displayModeButton, buttonMargin())
+            addView(info, buttonMargin())
+            addView(beginning, buttonMargin())
+            addView(retry, buttonMargin())
+            addView(close, buttonMargin())
+        }
+        val topScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            isFocusable = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(buttonRail, FrameLayout.LayoutParams(-2, -2))
+        }
+        topBar.addView(topScroll, LinearLayout.LayoutParams(0, -2, 0.58f))
+        root.addView(
+            topBar,
+            FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply {
+                setMargins(dp(18), dp(14), dp(18), 0)
+            }
+        )
 
         bottomBar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(14), dp(20), dp(16))
-            setBackgroundColor(0xCC070812.toInt())
+            setPadding(dp(18), dp(12), dp(18), dp(14))
+            background = roundStroke(PLAYER_CHROME, dp(16), STROKE, dp(1))
+            elevation = dp(10).toFloat()
         }
 
         statusView = TextView(this).apply {
@@ -186,6 +206,12 @@ class PlayerActivity : Activity() {
             setTextColor(0xFFC9C6E4.toInt())
             textSize = 13f
             gravity = Gravity.END
+        }
+        playerHintView = TextView(this).apply {
+            setTextColor(0xFF9EA7CD.toInt())
+            textSize = 12f
+            setSingleLine(true)
+            text = playerHintText()
         }
         seekBar = SeekBar(this).apply {
             max = 1_000
@@ -222,7 +248,13 @@ class PlayerActivity : Activity() {
         bottomBar.addView(tamponStatusView)
         bottomBar.addView(seekBar, LinearLayout.LayoutParams(-1, dp(42)))
         bottomBar.addView(timeView)
-        root.addView(bottomBar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        bottomBar.addView(playerHintView)
+        root.addView(
+            bottomBar,
+            FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
+                setMargins(dp(18), 0, dp(18), dp(16))
+            }
+        )
         setContentView(root)
 
         playPauseButton.setOnClickListener { togglePlayPause() }
@@ -456,7 +488,7 @@ class PlayerActivity : Activity() {
         }
     }
 
-    private fun displayModeButtonText(): String = "Format ${displayMode.label}"
+    private fun displayModeButtonText(): String = "Écran ${displayMode.label}"
 
     private fun handlePlayerEvent(event: MediaPlayer.Event) {
         main.post {
@@ -749,6 +781,9 @@ class PlayerActivity : Activity() {
 
     private fun showSeekUnavailable() {
         statusView.text = "Seek désactivé: tampon incomplet"
+        if (::playerHintView.isInitialized) {
+            playerHintView.text = "Tampon incomplet: lecture OK, déplacement disponible quand le tampon est complet"
+        }
         Toast.makeText(this, "Avance/retour disponibles quand le tampon est complet.", Toast.LENGTH_SHORT).show()
         showControlsTemporarily()
     }
@@ -769,6 +804,13 @@ class PlayerActivity : Activity() {
             else ->
                 "Tampon: ${formatBytes(status.aheadBytes)} d'avance - seek désactivé tant que le fichier est incomplet"
         }
+        if (::playerHintView.isInitialized) {
+            playerHintView.text = if (status.complete) {
+                playerHintText()
+            } else {
+                "OK pause/lecture • ↑ boutons • ↓ barre • seek après tampon complet"
+            }
+        }
     }
 
     private fun updateTimeLabel(progress: Int) {
@@ -787,7 +829,7 @@ class PlayerActivity : Activity() {
         val currentPlayer = player
         if (currentPlayer != null) {
             if (resumeEnabled) {
-                stateStore.saveResume(itemKey, currentPlayer.time)
+                stateStore.saveResume(itemKey, currentPlayer.time, currentPlayer.length)
             }
             currentPlayer.setEventListener(null)
             currentPlayer.stop()
@@ -804,6 +846,13 @@ class PlayerActivity : Activity() {
         main.removeCallbacks(hideControlsRunnable)
         main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
     }
+
+    private fun playerHintText(): String =
+        if (preloadProxy && !PreloadStreamServer.isComplete()) {
+            "OK pause/lecture • ↑ boutons • ↓ barre • seek après tampon complet"
+        } else {
+            "OK pause/lecture • ↑ boutons • ↓ barre • ←/→ 10s • avance rapide 30s • Retour masque"
+        }
 
     private fun focusAdjacentTopButton(direction: Int) {
         if (topControlButtons.isEmpty()) {
@@ -824,6 +873,9 @@ class PlayerActivity : Activity() {
             return
         }
         controlsVisible = visible
+        if (visible && ::playerHintView.isInitialized) {
+            playerHintView.text = playerHintText()
+        }
         val bars = listOf(topBar, bottomBar)
         if (visible) {
             bars.forEach { bar ->
@@ -851,9 +903,10 @@ class PlayerActivity : Activity() {
             text = label
             isAllCaps = false
             setTextColor(Color.WHITE)
-            textSize = 14f
+            textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(12), 0, dp(12), 0)
+            minWidth = dp(76)
             minHeight = 0
             minimumHeight = 0
             background = roundStroke(PANEL, dp(9), STROKE, dp(1))
@@ -972,6 +1025,7 @@ class PlayerActivity : Activity() {
 
         private val PANEL = Color.rgb(18, 20, 36)
         private val PANEL_FOCUS = Color.rgb(43, 40, 79)
+        private val PLAYER_CHROME = Color.argb(218, 12, 14, 28)
         private val ACCENT_2 = Color.rgb(71, 211, 194)
         private val ACCENT_FOCUS = Color.rgb(255, 209, 102)
         private val STROKE = Color.rgb(51, 54, 86)

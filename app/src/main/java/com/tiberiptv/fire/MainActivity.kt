@@ -1718,7 +1718,8 @@ private fun ContentRow(
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit
 ) {
     val visibleTitle = displayRowTitle(row.title)
-    val premium = premiumRowKind(row.title) != null
+    val rowKind = premiumRowKind(row.title)
+    val premium = rowKind != null
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             visibleTitle,
@@ -1739,6 +1740,7 @@ private fun ContentRow(
                     item = item,
                     compact = mode == Mode.LIVE,
                     premium = premium,
+                    rowKind = rowKind,
                     mode = mode,
                     rowTitle = visibleTitle,
                     favorite = favoriteKeys.contains(item.key()),
@@ -1853,6 +1855,7 @@ private fun ContentCard(
     item: XtreamModels.StreamItem,
     compact: Boolean,
     premium: Boolean = false,
+    rowKind: PremiumRowKind? = null,
     mode: Mode? = null,
     rowTitle: String = "",
     favorite: Boolean = false,
@@ -1864,7 +1867,10 @@ private fun ContentCard(
     val localSize = remember(item.key(), mode) {
         if (mode == Mode.DOWNLOADS) downloadedSize(context, item) else -1L
     }
-    val meta = if (localSize > 0L) "${metaLabel(item)} | ${formatBytes(localSize)}" else metaLabel(item)
+    val resumeMeta = remember(item.key(), rowKind) {
+        if (rowKind == PremiumRowKind.HISTORY) resumeCardMeta(context, item) else ""
+    }
+    val meta = cardMeta(item, localSize, resumeMeta)
     val cardWidth = when {
         compact -> 188.dp
         premium -> 184.dp
@@ -1917,7 +1923,9 @@ private fun ContentCard(
                     .height(posterHeight)
             )
             Text(item.title, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
-            Text(meta, color = Color(0xFFC9C6E4), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+            if (meta.isNotBlank()) {
+                Text(meta, color = Color(0xFFC9C6E4), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
@@ -3114,12 +3122,41 @@ private fun XtreamModels.StreamItem.withRating(rating: String): XtreamModels.Str
     )
 }
 
+private fun cardMeta(item: XtreamModels.StreamItem, localSize: Long, resumeMeta: String): String =
+    listOf(
+        resumeMeta,
+        metaLabel(item),
+        if (localSize > 0L) formatBytes(localSize) else ""
+    ).filter { value -> value.isNotBlank() }.joinToString(" | ")
+
+private fun resumeCardMeta(context: Context, item: XtreamModels.StreamItem): String {
+    val store = AppStateStore(context)
+    val position = store.resumePosition(item)
+    val duration = store.resumeDuration(item.key())
+    return when {
+        duration > position + 60_000L -> "Reste ${formatDurationLabel(duration - position)}"
+        position > PlaybackPolicy.RESUME_THRESHOLD_MS -> "Reprendre à ${formatDurationLabel(position)}"
+        else -> ""
+    }
+}
+
+private fun formatDurationLabel(ms: Long): String {
+    val totalMinutes = (ms / 60_000L).coerceAtLeast(0L)
+    val hours = totalMinutes / 60L
+    val minutes = totalMinutes % 60L
+    return if (hours > 0L) {
+        "${hours}h${minutes.toString().padStart(2, '0')}"
+    } else {
+        "${minutes}min"
+    }
+}
+
 private fun metaLabel(item: XtreamModels.StreamItem): String {
     val parts = mutableListOf<String>()
     if (item.year.isNotBlank()) parts.add(item.year)
     if (item.releaseDate.isNotBlank()) parts.add(item.releaseDate)
     if (item.type == XtreamModels.StreamItem.TYPE_EPISODE) parts.add("Episode")
-    return parts.ifEmpty { listOf(item.type) }.joinToString(" | ")
+    return parts.joinToString(" | ")
 }
 
 private fun isUltraHd(item: XtreamModels.StreamItem, qualityHint: String = ""): Boolean {

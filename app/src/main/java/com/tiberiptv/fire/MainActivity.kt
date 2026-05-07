@@ -3002,7 +3002,6 @@ private fun XtreamModels.StreamItem.withRating(rating: String): XtreamModels.Str
 private fun metaLabel(item: XtreamModels.StreamItem): String {
     val parts = mutableListOf<String>()
     if (item.year.isNotBlank()) parts.add(item.year)
-    if (item.rating.isNotBlank()) parts.add("★ ${item.rating}")
     if (item.releaseDate.isNotBlank()) parts.add(item.releaseDate)
     if (item.type == XtreamModels.StreamItem.TYPE_EPISODE) parts.add("Episode")
     return parts.ifEmpty { listOf(item.type) }.joinToString(" | ")
@@ -3050,7 +3049,6 @@ private fun detailText(detail: XtreamModels.ItemDetail): String {
     if (detail.plot.isNotBlank()) parts.add(detail.plot)
     if (detail.genre.isNotBlank()) parts.add("Genre: ${detail.genre}")
     if (detail.duration.isNotBlank()) parts.add("Durée: ${detail.duration}")
-    if (detail.rating.isNotBlank()) parts.add("Note: ${detail.rating}")
     if (detail.cast.isNotBlank()) parts.add("Casting: ${detail.cast}")
     if (detail.director.isNotBlank()) parts.add("Réalisation: ${detail.director}")
     return parts.joinToString("\n\n")

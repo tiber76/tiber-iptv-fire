@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -1680,13 +1681,14 @@ private fun CatalogScreen(
                 )
             }
             if (rows.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        text = if (state.query.isBlank()) "Aucun contenu." else "Aucun résultat.",
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                }
+                PremiumEmptyState(
+                    title = if (state.query.isBlank()) "Aucun contenu" else "Aucun résultat",
+                    subtitle = emptyStateSubtitle(state),
+                    primaryAction = if (state.query.isBlank()) "Actualiser" else "Effacer",
+                    onPrimaryAction = {
+                        if (state.query.isBlank()) onRefresh() else onSearch("")
+                    }
+                )
             } else {
                 LazyColumn(
                     state = listState,
@@ -1743,6 +1745,57 @@ private fun ContentRow(
                     onClick = { onOpenItem(item) },
                     onLongClick = { onToggleFavorite(item) }
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PremiumEmptyState(
+    title: String,
+    subtitle: String,
+    primaryAction: String,
+    onPrimaryAction: () -> Unit
+) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            color = Color(0xAA161B2F),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, Color(0xFF343B60)),
+            modifier = Modifier.widthIn(max = 560.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 28.dp, vertical = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(58.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF2B3565), Color(0xFF171B2E))
+                            )
+                        )
+                        .border(1.dp, Color(0xFF47D3C2), RoundedCornerShape(18.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("T", color = Color(0xFF47D3C2), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+                }
+                Text(title, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                Text(
+                    subtitle,
+                    color = Color(0xFFC9CDEB),
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                Button(onClick = onPrimaryAction) {
+                    Text(primaryAction)
+                }
             }
         }
     }
@@ -2314,17 +2367,33 @@ private fun SettingsScreen(
             .fillMaxSize()
             .padding(32.dp)
             .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Réglages", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Button(onClick = onClose) { Text("Retour") }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Réglages", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+                Text(
+                    "Connexion, stockage, player et télécommande",
+                    color = Color(0xFFC9CDEB),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            DetailActionButton(label = "Retour", onClick = onClose, modifier = Modifier.width(118.dp))
         }
-        SettingSwitch("Mode 1 connexion distante", "Garde un seul appel remote actif à la fois.", state.singleConnectionMode, onToggleSingleConnection)
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Profil réseau", color = Color.White, fontWeight = FontWeight.Bold)
+
+        SettingsSectionCard(
+            title = "Sécurité remote",
+            subtitle = "La règle importante reste visible et activable ici."
+        ) {
+            SettingSwitch("Mode 1 connexion distante", "Garde un seul appel remote actif à la fois.", state.singleConnectionMode, onToggleSingleConnection)
+        }
+
+        SettingsSectionCard(
+            title = "Profil réseau",
+            subtitle = "Choisis le comportement adapté à ton Wi-Fi, VPN ou débit."
+        ) {
             Text(
-                "Choisis une carte avec OK. Le profil change immédiatement le buffer, le format live et la taille du tampon.",
+                "OK sur une carte applique immédiatement le buffer, le format live et la taille du tampon.",
                 color = Color(0xFFC9C6E4),
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -2339,23 +2408,61 @@ private fun SettingsScreen(
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Format live", color = Color.White, modifier = Modifier.width(170.dp))
-            FilterChip(selected = state.liveFormat == "ts", onClick = { onLiveFormat("ts") }, label = { Text("TS") })
-            FilterChip(selected = state.liveFormat == "m3u8", onClick = { onLiveFormat("m3u8") }, label = { Text("M3U8") })
+
+        SettingsSectionCard(
+            title = "Player",
+            subtitle = "Réglages utiles selon l’écran et la stabilité du flux."
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Format live", color = Color.White, modifier = Modifier.width(170.dp))
+                FilterChip(selected = state.liveFormat == "ts", onClick = { onLiveFormat("ts") }, label = { Text("TS") })
+                FilterChip(selected = state.liveFormat == "m3u8", onClick = { onLiveFormat("m3u8") }, label = { Text("M3U8") })
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Buffer lecteur: ${state.playerBufferMs} ms", color = Color.White, modifier = Modifier.width(220.dp))
+                OutlinedButton(onClick = onCycleBuffer) { Text("Changer") }
+            }
+            Text(
+                "Tampon: lecture après ${formatBytes(state.networkProfile.preloadReadyBytes)}, avance max ${formatBytes(state.networkProfile.preloadAheadBytes)}",
+                color = Color(0xFFC9C6E4),
+                style = MaterialTheme.typography.bodySmall
+            )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Buffer lecteur: ${state.playerBufferMs} ms", color = Color.White, modifier = Modifier.width(220.dp))
-            OutlinedButton(onClick = onCycleBuffer) { Text("Changer") }
-        }
-        Text(
-            "Tampon: lecture après ${formatBytes(state.networkProfile.preloadReadyBytes)}, avance max ${formatBytes(state.networkProfile.preloadAheadBytes)}",
-            color = Color(0xFFC9C6E4),
-            style = MaterialTheme.typography.bodySmall
-        )
+
         RemoteHelpPanel()
-        OutlinedButton(onClick = onLogout, colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFB4AB))) {
-            Text("Déconnecter le compte")
+
+        SettingsSectionCard(
+            title = "Compte",
+            subtitle = "Changer de compte conserve l’app, mais réinitialise l’accès courant."
+        ) {
+            OutlinedButton(onClick = onLogout, colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFB4AB))) {
+                Text("Déconnecter le compte")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsSectionCard(
+    title: String,
+    subtitle: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Surface(
+        color = Color(0xAA171B2E),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, Color(0xFF343B60)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
+                Text(subtitle, color = Color(0xFF9EA7CD), style = MaterialTheme.typography.bodySmall)
+            }
+            content()
         }
     }
 }
@@ -2944,6 +3051,14 @@ private fun filteredRows(
         if (items.isEmpty()) null else XtreamModels.ContentRow(row.title, items)
     }
 }
+
+private fun emptyStateSubtitle(state: MainUiState): String =
+    when {
+        state.query.isNotBlank() -> "Aucun titre ne correspond à cette recherche. Efface le filtre pour revenir au catalogue."
+        state.mode == Mode.FAVORITES -> "Ajoute un favori avec un clic long sur une miniature, ou depuis la fiche du film."
+        state.mode == Mode.DOWNLOADS -> "Les films téléchargés apparaîtront ici avec leur poids et les actions locales."
+        else -> "Le catalogue peut être vide ou pas encore chargé. Lance une actualisation depuis cette page."
+    }
 
 private fun List<XtreamModels.StreamItem>.sortedForCatalog(sort: CatalogSort): List<XtreamModels.StreamItem> =
     when (sort) {

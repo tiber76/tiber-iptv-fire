@@ -16,8 +16,8 @@ android {
         applicationId "com.tiberiptv.fire"
         minSdk 25
         targetSdk 35
-        versionCode 10
-        versionName "0.1.9"
+        versionCode 11
+        versionName "0.1.10"
         if (!firestickAbis.isEmpty()) {
             ndk {
                 abiFilters.addAll(firestickAbis)
@@ -89,4 +89,5 @@ dependencies {
     kapt "androidx.room:room-compiler:2.6.1"
     implementation "org.videolan.android:libvlc-all:3.7.0"
     debugImplementation "androidx.compose.ui:ui-tooling"
+    testImplementation "junit:junit:4.13.2"
 }

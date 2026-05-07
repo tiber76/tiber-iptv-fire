@@ -403,8 +403,6 @@ data class PlaybackRequest(
     val bufferedPlayback: Boolean = false
 )
 
-private const val RESUME_THRESHOLD_MS = 10_000L
-
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
     private val credentialStore = CredentialStore(appContext)
@@ -449,8 +447,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         activePreloadSession?.stop()
         activePreloadItem = null
         PreloadStreamServer.stop()
-        RemoteActionGuard.release("lecture")
-        RemoteActionGuard.release("tampon")
+        RemoteActionGuard.release(RemoteLabels.PLAYBACK)
+        RemoteActionGuard.release(RemoteLabels.BUFFER)
         super.onCleared()
     }
 
@@ -532,7 +530,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(error = "Compte Xtream absent.", loading = false) }
             return
         }
-        if (!RemoteActionGuard.tryAcquire("synchronisation ${mode.label}")) {
+        if (!RemoteActionGuard.tryAcquire(RemoteLabels.sync(mode.label))) {
             _uiState.update {
                 it.copy(
                     mode = mode,
@@ -585,7 +583,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             } finally {
-                RemoteActionGuard.release("synchronisation ${mode.label}")
+                RemoteActionGuard.release(RemoteLabels.sync(mode.label))
             }
         }
     }
@@ -692,7 +690,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (preloadSession != null &&
             activePreloadItem?.key() == item.key() &&
             preloadSession.downloadedBytes() > 0L &&
-            RemoteActionGuard.activeLabel() == "tampon"
+            RemoteActionGuard.activeLabel() == RemoteLabels.BUFFER
         ) {
             stateStore.addHistory(item)
             activePreloadSession = null
@@ -707,7 +705,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     status = "Lecture depuis le tampon"
                 )
             }
-            return PlaybackRequest(preloadSession.localUrl(), "", "tampon", bufferedPlayback = true)
+            return PlaybackRequest(preloadSession.localUrl(), "", RemoteLabels.BUFFER, bufferedPlayback = true)
         }
         val api = api ?: return null
         val local = localFile(item)
@@ -726,7 +724,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
-        if (!RemoteActionGuard.tryAcquire("lecture")) {
+        if (!RemoteActionGuard.tryAcquire(RemoteLabels.PLAYBACK)) {
             _uiState.update { it.copy(error = "Lecture bloquée: session distante active ${RemoteActionGuard.activeLabel()}.") }
             return null
         }
@@ -738,7 +736,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             ""
         }
-        return PlaybackRequest(url, fallback, "lecture")
+        return PlaybackRequest(url, fallback, RemoteLabels.PLAYBACK)
     }
 
     fun startPreload(item: XtreamModels.StreamItem) {
@@ -750,7 +748,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val profile = stateStore.networkProfile()
         val storage = storageInfo()
-        if (storage.availableBytes in 0 until profile.preloadReadyBytes + DOWNLOAD_SPACE_MARGIN_BYTES) {
+        if (storage.availableBytes in 0 until profile.preloadReadyBytes + StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES) {
             _uiState.update {
                 it.withStorage(storage).copy(
                     error = "Stockage trop bas pour tamponner: ${formatBytes(storage.availableBytes)} libres."
@@ -766,7 +764,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(error = "Tampon déjà en cours.") }
             return
         }
-        if (!RemoteActionGuard.tryAcquire("tampon")) {
+        if (!RemoteActionGuard.tryAcquire(RemoteLabels.BUFFER)) {
             _uiState.update { it.copy(error = "Tampon bloqué: session distante active ${RemoteActionGuard.activeLabel()}.") }
             return
         }
@@ -795,7 +793,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 activePreloadSession = session
                 activePreloadItem = item
-                val deadline = System.currentTimeMillis() + PRELOAD_TIMEOUT_MS
+                val deadline = System.currentTimeMillis() + StoragePolicy.PRELOAD_TIMEOUT_MS
                 while (!preloadCancelRequested && System.currentTimeMillis() < deadline) {
                     val error = session.error()
                     if (error != null) throw error
@@ -843,7 +841,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (!ready) {
                     session?.stop()
                     PreloadStreamServer.stop()
-                    RemoteActionGuard.release("tampon")
+                    RemoteActionGuard.release(RemoteLabels.BUFFER)
                     if (activePreloadSession === session) {
                         activePreloadSession = null
                     }
@@ -875,7 +873,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(error = "Aucun tampon prêt pour ce contenu.") }
             return
         }
-        if (RemoteActionGuard.activeLabel() != "tampon") {
+        if (RemoteActionGuard.activeLabel() != RemoteLabels.BUFFER) {
             _uiState.update { it.copy(error = "Conversion bloquée: verrou tampon absent.") }
             return
         }
@@ -886,7 +884,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val total = session.totalBytes()
         val storage = storageInfo()
-        val required = if (total > 0L) total + DOWNLOAD_SPACE_MARGIN_BYTES else DOWNLOAD_SPACE_MARGIN_BYTES
+        val required = if (total > 0L) total + StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES else StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES
         if (storage.availableBytes in 0 until required) {
             _uiState.update {
                 it.withStorage(storage).copy(
@@ -916,7 +914,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 while (!preloadCancelRequested && !session.isComplete()) {
                     session.error()?.let { throw it }
                     val currentStorage = storageInfo()
-                    if (currentStorage.availableBytes < DOWNLOAD_SPACE_MARGIN_BYTES) {
+                    if (currentStorage.availableBytes < StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES) {
                         throw IllegalStateException("Stockage presque plein.")
                     }
                     _uiState.update {
@@ -941,7 +939,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 stateStore.saveContentLength(item, target.length())
                 session.stop()
                 PreloadStreamServer.stop()
-                RemoteActionGuard.release("tampon")
+                RemoteActionGuard.release(RemoteLabels.BUFFER)
                 activePreloadSession = null
                 activePreloadItem = null
                 val updatedStorage = storageInfo()
@@ -961,7 +959,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 target.delete()
                 session.stop()
                 PreloadStreamServer.stop()
-                RemoteActionGuard.release("tampon")
+                RemoteActionGuard.release(RemoteLabels.BUFFER)
                 activePreloadSession = null
                 activePreloadItem = null
                 _uiState.update {
@@ -982,10 +980,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun cleanupBufferedPlaybackIfIdle() {
         if (activePreloadSession == null &&
             _uiState.value.preloadingItem == null &&
-            RemoteActionGuard.activeLabel() == "tampon"
+            RemoteActionGuard.activeLabel() == RemoteLabels.BUFFER
         ) {
             PreloadStreamServer.stop()
-            RemoteActionGuard.release("tampon")
+            RemoteActionGuard.release(RemoteLabels.BUFFER)
         }
     }
 
@@ -996,7 +994,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val api = api ?: return
         val storage = storageInfo()
-        if (storage.availableBytes in 0 until DOWNLOAD_SPACE_MARGIN_BYTES) {
+        if (storage.availableBytes in 0 until StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES) {
             _uiState.update {
                 it.withStorage(storage).copy(
                     error = "Stockage trop bas pour télécharger: ${formatBytes(storage.availableBytes)} libres."
@@ -1004,7 +1002,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        if (!RemoteActionGuard.tryAcquire("telechargement")) {
+        if (!RemoteActionGuard.tryAcquire(RemoteLabels.DOWNLOAD)) {
             _uiState.update { it.copy(error = "Téléchargement bloqué: session distante active ${RemoteActionGuard.activeLabel()}.") }
             return
         }
@@ -1073,7 +1071,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } finally {
                 activeDownloadConnection?.disconnect()
                 activeDownloadConnection = null
-                RemoteActionGuard.release("telechargement")
+                RemoteActionGuard.release(RemoteLabels.DOWNLOAD)
             }
         }
     }
@@ -1090,7 +1088,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(preloadCancelling = true, status = "Annulation du tampon...") }
         activePreloadSession?.stop()
         PreloadStreamServer.stop()
-        RemoteActionGuard.release("tampon")
+        RemoteActionGuard.release(RemoteLabels.BUFFER)
         preloadJob?.cancel()
         activePreloadSession = null
         activePreloadItem = null
@@ -1175,7 +1173,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun logout() {
         credentialStore.clear()
-        RemoteActionGuard.release("lecture")
+        RemoteActionGuard.release(RemoteLabels.PLAYBACK)
     }
 
     private fun loadMovieDetail(item: XtreamModels.StreamItem) {
@@ -1281,7 +1279,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         connection.readTimeout = 30_000
         connection.setRequestProperty("Accept", "*/*")
         connection.setRequestProperty("Connection", "close")
-        connection.setRequestProperty("User-Agent", STREAM_USER_AGENT)
+        connection.setRequestProperty("User-Agent", StreamNetwork.USER_AGENT)
         try {
             val code = connection.responseCode
             if (code !in 200..299) throw IllegalStateException("HTTP $code")
@@ -1293,7 +1291,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     var written = 0L
                     val startedAtMs = SystemClock.elapsedRealtime()
                     var lastUiUpdateMs = startedAtMs
-                    var nextStorageCheck = DOWNLOAD_STORAGE_CHECK_INTERVAL_BYTES
+                    var nextStorageCheck = StoragePolicy.DOWNLOAD_STORAGE_CHECK_INTERVAL_BYTES
                     while (true) {
                         if (downloadCancelRequested) throw InterruptedException("Annulé")
                         val read = input.read(buffer)
@@ -1301,8 +1299,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         output.write(buffer, 0, read)
                         written += read.toLong()
                         if (written >= nextStorageCheck) {
-                            nextStorageCheck += DOWNLOAD_STORAGE_CHECK_INTERVAL_BYTES
-                            if (availableBytes(target.parentFile ?: appContext.filesDir) < DOWNLOAD_SPACE_MARGIN_BYTES) {
+                            nextStorageCheck += StoragePolicy.DOWNLOAD_STORAGE_CHECK_INTERVAL_BYTES
+                            if (availableBytes(target.parentFile ?: appContext.filesDir) < StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES) {
                                 throw IllegalStateException("Stockage presque plein.")
                             }
                         }
@@ -1352,10 +1350,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!directory.exists()) {
             directory.mkdirs()
         }
-        val posterCache = File(appContext.cacheDir, "posters")
-        val tamponCache = File(appContext.cacheDir, "tampon")
+        val posterCache = File(appContext.cacheDir, CacheDirectories.POSTERS)
+        val legacyPosterCache = File(appContext.cacheDir, CacheDirectories.LEGACY_POSTERS)
+        val tamponCache = File(appContext.cacheDir, CacheDirectories.BUFFER)
         val downloadBytes = directorySize(directory)
-        val posterBytes = directorySize(posterCache)
+        val posterBytes = directorySize(posterCache) + directorySize(legacyPosterCache)
         val tamponBytes = directorySize(tamponCache)
         return try {
             val stat = StatFs(directory.absolutePath)
@@ -1381,12 +1380,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun firstItems(items: List<XtreamModels.StreamItem>, limit: Int): List<XtreamModels.StreamItem> =
         items.take(limit)
 
-    companion object {
-        private const val DOWNLOAD_SPACE_MARGIN_BYTES = 768L * 1024L * 1024L
-        private const val DOWNLOAD_STORAGE_CHECK_INTERVAL_BYTES = 16L * 1024L * 1024L
-        private const val PRELOAD_TIMEOUT_MS = 10L * 60L * 1000L
-        private const val STREAM_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
-    }
 }
 
 @Composable
@@ -1804,13 +1797,13 @@ private fun DetailScreen(
                     ) {
                         item {
                             DetailActionButton(
-                                label = if (state.selectedResumePositionMs > RESUME_THRESHOLD_MS) "Reprendre" else "Lire",
+                                label = if (state.selectedResumePositionMs > PlaybackPolicy.RESUME_THRESHOLD_MS) "Reprendre" else "Lire",
                                 enabled = canPlay,
                                 primary = true,
                                 onClick = { onPlay(item) }
                             )
                         }
-                        if (state.selectedResumePositionMs > RESUME_THRESHOLD_MS) {
+                        if (state.selectedResumePositionMs > PlaybackPolicy.RESUME_THRESHOLD_MS) {
                             item {
                                 DetailActionButton(
                                     label = "Depuis début",

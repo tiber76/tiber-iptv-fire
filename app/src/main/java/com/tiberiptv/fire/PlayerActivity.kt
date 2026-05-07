@@ -284,14 +284,14 @@ class PlayerActivity : Activity() {
                     setControlsVisible(true)
                     main.removeCallbacks(hideControlsRunnable)
                     topControlButtons.firstOrNull()?.requestFocus()
-                    main.postDelayed(hideControlsRunnable, CONTROLS_HIDE_DELAY_MS)
+                    main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
                     setControlsVisible(true)
                     main.removeCallbacks(hideControlsRunnable)
                     seekBar.requestFocus()
-                    main.postDelayed(hideControlsRunnable, CONTROLS_HIDE_DELAY_MS)
+                    main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_RIGHT -> {
@@ -366,7 +366,7 @@ class PlayerActivity : Activity() {
     }
 
     private fun releaseBufferedPlayback() {
-        if (preloadProxy || remoteGuardLabel == "tampon") {
+        if (preloadProxy || remoteGuardLabel == RemoteLabels.BUFFER) {
             PreloadStreamServer.stop()
         }
     }
@@ -802,7 +802,7 @@ class PlayerActivity : Activity() {
     private fun showControlsTemporarily() {
         setControlsVisible(true)
         main.removeCallbacks(hideControlsRunnable)
-        main.postDelayed(hideControlsRunnable, CONTROLS_HIDE_DELAY_MS)
+        main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
     }
 
     private fun focusAdjacentTopButton(direction: Int) {
@@ -816,7 +816,7 @@ class PlayerActivity : Activity() {
         }
         topControlButtons[nextIndex].requestFocus()
         main.removeCallbacks(hideControlsRunnable)
-        main.postDelayed(hideControlsRunnable, CONTROLS_HIDE_DELAY_MS)
+        main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
     }
 
     private fun setControlsVisible(visible: Boolean) {
@@ -975,6 +975,5 @@ class PlayerActivity : Activity() {
         private val ACCENT_2 = Color.rgb(71, 211, 194)
         private val ACCENT_FOCUS = Color.rgb(255, 209, 102)
         private val STROKE = Color.rgb(51, 54, 86)
-        private const val CONTROLS_HIDE_DELAY_MS = 4_000L
     }
 }

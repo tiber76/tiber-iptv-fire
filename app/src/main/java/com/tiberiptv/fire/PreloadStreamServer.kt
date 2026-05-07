@@ -19,7 +19,6 @@ import kotlin.math.max
 import kotlin.math.min
 
 object PreloadStreamServer {
-    private const val USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
     private const val BUFFER_SIZE = 64 * 1024
     private val staticLock = Object()
     private var current: Session? = null
@@ -38,12 +37,12 @@ object PreloadStreamServer {
     @JvmStatic
     @Throws(Exception::class)
     fun start(context: Context, remoteUrl: String, maxAheadBytes: Long): Session {
-        if (RemoteActionGuard.activeLabel() != "tampon") {
+        if (RemoteActionGuard.activeLabel() != RemoteLabels.BUFFER) {
             throw IllegalStateException("Tampon bloque: verrou remote absent.")
         }
         synchronized(staticLock) {
             stop()
-            val dir = File(context.cacheDir, "tampon")
+            val dir = File(context.cacheDir, CacheDirectories.BUFFER)
             if (!dir.exists()) {
                 dir.mkdirs()
             }
@@ -82,7 +81,7 @@ object PreloadStreamServer {
 
     @JvmStatic
     fun cleanupCache(context: Context) {
-        val dir = File(context.cacheDir, "tampon")
+        val dir = File(context.cacheDir, CacheDirectories.BUFFER)
         if (!dir.exists()) {
             return
         }
@@ -231,7 +230,7 @@ object PreloadStreamServer {
                 connection.readTimeout = 30_000
                 connection.setRequestProperty("Accept", "*/*")
                 connection.setRequestProperty("Connection", "close")
-                connection.setRequestProperty("User-Agent", USER_AGENT)
+                connection.setRequestProperty("User-Agent", StreamNetwork.USER_AGENT)
                 val code = connection.responseCode
                 if (code !in 200..299) {
                     throw IllegalStateException("HTTP $code")

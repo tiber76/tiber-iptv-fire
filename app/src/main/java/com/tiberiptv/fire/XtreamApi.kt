@@ -219,8 +219,8 @@ class XtreamApi(private val credentials: XtreamModels.Credentials) {
             label == "details film" ||
             label == "details serie" ||
             label == "EPG" ||
-            label == "telechargement" ||
-            label.startsWith("synchronisation ")
+            label == RemoteLabels.DOWNLOAD ||
+            label.startsWith(RemoteLabels.SYNC_PREFIX)
         ) {
             return
         }

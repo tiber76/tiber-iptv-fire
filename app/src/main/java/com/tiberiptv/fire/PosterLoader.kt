@@ -20,7 +20,7 @@ import kotlin.math.max
 
 class PosterLoader(context: Context) {
     private val main = Handler(Looper.getMainLooper())
-    private val diskDir = File(context.cacheDir, POSTER_CACHE_DIR)
+    private val diskDir = File(context.cacheDir, CacheDirectories.POSTERS)
 
     init {
         if (!diskDir.exists()) {
@@ -70,15 +70,15 @@ class PosterLoader(context: Context) {
 
     fun memoryCacheMaxBytes(): Int = memoryCache.maxSize()
 
-    fun diskFileCount(): Int = diskDir.listFiles()?.size ?: 0
+    fun diskFileCount(): Int =
+        (diskDir.listFiles()?.size ?: 0) + (legacyDiskDir.listFiles()?.size ?: 0)
 
-    fun diskCacheBytes(): Long = diskUsage(diskDir)
+    fun diskCacheBytes(): Long = diskUsage(diskDir) + diskUsage(legacyDiskDir)
 
     fun clearCache() {
         memoryCache.evictAll()
-        diskDir.listFiles()?.forEach { file ->
-            file.delete()
-        }
+        clearDirectory(diskDir)
+        clearDirectory(legacyDiskDir)
     }
 
     private fun readFromDisk(url: String): Bitmap? {
@@ -103,8 +103,16 @@ class PosterLoader(context: Context) {
         }
     }
 
+    private val legacyDiskDir: File
+        get() = File(diskDir.parentFile ?: diskDir, CacheDirectories.LEGACY_POSTERS)
+
+    private fun clearDirectory(directory: File) {
+        directory.listFiles()?.forEach { file ->
+            file.delete()
+        }
+    }
+
     private companion object {
-        private const val POSTER_CACHE_DIR = "posters-v2"
         private const val MAX_IMAGE_WIDTH = 900
         private const val MAX_IMAGE_HEIGHT = 1350
         private const val JPEG_CACHE_QUALITY = 95
@@ -136,14 +144,14 @@ class PosterLoader(context: Context) {
                 null
             } finally {
                 connection?.disconnect()
-                RemoteActionGuard.release("affiche")
+                RemoteActionGuard.release(RemoteLabels.POSTER)
             }
         }
 
         private fun acquirePosterSlot(): Boolean {
             val deadline = System.currentTimeMillis() + POSTER_GUARD_TIMEOUT_MS
             while (System.currentTimeMillis() < deadline) {
-                if (RemoteActionGuard.tryAcquire("affiche")) {
+                if (RemoteActionGuard.tryAcquire(RemoteLabels.POSTER)) {
                     return true
                 }
                 try {

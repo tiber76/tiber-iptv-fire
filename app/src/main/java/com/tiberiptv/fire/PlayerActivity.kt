@@ -14,14 +14,17 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
@@ -154,7 +157,7 @@ class PlayerActivity : Activity() {
         val info = controlButton("Diagnostic")
         val beginning = controlButton("Début")
         val retry = controlButton("Relancer")
-        val close = controlButton("Quitter")
+        val close = controlButton("Retour")
         topControlButtons.clear()
         topControlButtons.addAll(listOf(playPauseButton, audio, subtitles, displayModeButton, info, beginning, retry, close))
 
@@ -621,34 +624,78 @@ class PlayerActivity : Activity() {
         }
 
         val choices = mutableListOf<MediaPlayer.TrackDescription>()
-        val labels = mutableListOf<String>()
         val selected = if (audio) currentPlayer.audioTrack else currentPlayer.spuTrack
         for (track in tracks) {
             choices.add(track)
-            labels.add((if (track.id == selected) "* " else "") + track.name)
         }
 
-        AlertDialog.Builder(this)
-            .setTitle(if (audio) "Piste audio" else "Sous-titres")
-            .setItems(labels.toTypedArray()) { _, which ->
-                val choice = choices[which]
+        val dialog = AlertDialog.Builder(this).create()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(16))
+            background = roundStroke(PLAYER_CHROME, dp(16), STROKE, dp(1))
+        }
+        root.addView(TextView(this).apply {
+            text = if (audio) "Piste audio" else "Sous-titres"
+            setTextColor(Color.WHITE)
+            textSize = 22f
+            typeface = Typeface.DEFAULT_BOLD
+        })
+        root.addView(TextView(this).apply {
+            text = if (audio) "Choisis la piste avec OK." else "Active ou change les sous-titres avec OK."
+            setTextColor(0xFFC9C6E4.toInt())
+            textSize = 13f
+            setPadding(0, dp(4), 0, dp(12))
+        })
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        choices.forEach { choice ->
+            val selectedChoice = choice.id == selected
+            val button = panelButton((if (selectedChoice) "✓ " else "") + choice.name)
+            button.background = roundStroke(
+                if (selectedChoice) PANEL_FOCUS else PANEL,
+                dp(10),
+                if (selectedChoice) ACCENT_2 else STROKE,
+                dp(if (selectedChoice) 2 else 1)
+            )
+            button.setOnClickListener {
                 val ok = if (audio) currentPlayer.setAudioTrack(choice.id) else currentPlayer.setSpuTrack(choice.id)
-                statusView.text = if (ok) playbackStatus() else "Selection impossible"
+                statusView.text = if (ok) playbackStatus() else "Sélection impossible"
+                dialog.dismiss()
             }
-            .show()
+            list.addView(button, LinearLayout.LayoutParams(-1, dp(48)).apply {
+                setMargins(0, 0, 0, dp(8))
+            })
+        }
+        root.addView(ScrollView(this).apply {
+            addView(list)
+        }, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(panelButton("Fermer").apply { setOnClickListener { dialog.dismiss() } }, LinearLayout.LayoutParams(-1, dp(48)))
+        dialog.setView(root)
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+            dialog.window?.setLayout(dp(560), dp(520))
+            list.getChildAt(choices.indexOfFirst { it.id == selected }.coerceAtLeast(0))?.requestFocus()
+        }
+        dialog.show()
     }
 
     private fun showInfoDialog() {
         val message = StringBuilder()
-        message.append("Moteur:\nLibVLC 3.7.0 avec decodage logiciel audio\n\n")
-        message.append("Affichage:\n").append(displayMode.label).append("\n\n")
-        message.append("URL:\n").append(streamUrl).append("\n\n")
+        message.append("Lecture\n")
+            .append("Etat: ").append(playbackStatus()).append("\n")
+            .append("Affichage: ").append(displayMode.label).append("\n")
+            .append("Buffer: ").append(stateStore.playerBufferMs()).append(" ms\n")
+            .append("Remote: ").append(remoteGuardLabel ?: "local").append("\n")
+            .append("Fallback utilisé: ").append(if (usedFallback) "oui" else "non").append("\n")
+            .append("Déplacement: ").append(if (canSeekPlayback()) "actif" else "bloqué par tampon incomplet").append("\n\n")
+        message.append("Moteur\nLibVLC 3.7.0 avec décodage logiciel audio\n\n")
         val currentPlayer = player
         if (currentPlayer != null) {
-            message.append("Etat:\n").append(playbackStatus()).append("\n\n")
             val videoTrack = currentPlayer.currentVideoTrack
             if (videoTrack != null) {
-                message.append("Video:\n")
+                message.append("Vidéo\n")
                     .append(codecLabel(videoTrack.codec))
                     .append(" - ")
                     .append(videoTrack.width)
@@ -663,12 +710,17 @@ class PlayerActivity : Activity() {
             appendTracks(message, "Pistes audio", currentPlayer.audioTracks, currentPlayer.audioTrack)
             appendTracks(message, "Sous-titres", currentPlayer.spuTracks, currentPlayer.spuTrack)
         }
+        if (preloadProxy) {
+            val tampon = PreloadStreamServer.status()
+            message.append("\nTampon\n")
+                .append("Avance: ").append(formatBytes(tampon.aheadBytes)).append("\n")
+                .append("Téléchargé: ").append(formatBytes(tampon.downloadedBytes)).append(totalSuffix(tampon.totalBytes)).append("\n")
+                .append("Complet: ").append(if (tampon.complete) "oui" else "non").append("\n")
+            tampon.errorMessage?.let { error -> message.append("Erreur: ").append(error).append("\n") }
+        }
+        message.append("\nURL\n").append(streamUrl)
 
-        AlertDialog.Builder(this)
-            .setTitle("Diagnostic streaming")
-            .setMessage(message.toString())
-            .setPositiveButton("OK", null)
-            .show()
+        showPremiumTextDialog("Diagnostic qualité", message.toString())
     }
 
     private fun playbackErrorMessage(): String {
@@ -945,6 +997,42 @@ class PlayerActivity : Activity() {
         }
     }
 
+    private fun panelButton(label: String): Button =
+        controlButton(label).apply {
+            textSize = 15f
+            gravity = Gravity.CENTER
+            background = roundStroke(PANEL, dp(10), STROKE, dp(1))
+        }
+
+    private fun showPremiumTextDialog(title: String, message: String) {
+        val dialog = AlertDialog.Builder(this).create()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(16))
+            background = roundStroke(PLAYER_CHROME, dp(16), STROKE, dp(1))
+        }
+        root.addView(TextView(this).apply {
+            text = title
+            setTextColor(Color.WHITE)
+            textSize = 22f
+            typeface = Typeface.DEFAULT_BOLD
+        })
+        val content = TextView(this).apply {
+            text = message
+            setTextColor(0xFFE8EAFB.toInt())
+            textSize = 13f
+            setPadding(0, dp(12), 0, dp(12))
+        }
+        root.addView(ScrollView(this).apply { addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(panelButton("Fermer").apply { setOnClickListener { dialog.dismiss() } }, LinearLayout.LayoutParams(-1, dp(48)))
+        dialog.setView(root)
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+            dialog.window?.setLayout(dp(620), dp(560))
+        }
+        dialog.show()
+    }
+
     private fun buttonMargin(): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(-2, dp(44)).apply {
             setMargins(dp(8), 0, 0, 0)
@@ -1001,14 +1089,11 @@ class PlayerActivity : Activity() {
     }
 
     private fun enterImmersiveMode() {
-        window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-        window.decorView.systemUiVisibility =
-            View.SYSTEM_UI_FLAG_FULLSCREEN or
-                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.systemBars())
+        }
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()

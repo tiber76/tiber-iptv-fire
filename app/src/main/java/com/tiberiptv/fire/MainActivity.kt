@@ -75,6 +75,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -1475,6 +1476,8 @@ private fun MainRoute(
     onLogout: () -> Unit
 ) {
     val catalogListState = rememberLazyListState()
+    val rowListStates = remember { mutableStateMapOf<String, LazyListState>() }
+    var restoreItemKey by remember { mutableStateOf<String?>(null) }
     var catalogInitialFocusRequested by remember { mutableStateOf(false) }
 
     BackHandler(enabled = state.settingsVisible || state.selectedItem != null) {
@@ -1533,11 +1536,17 @@ private fun MainRoute(
                     onToggleFilterRecentYear = onToggleFilterRecentYear,
                     onCatalogSort = onCatalogSort,
                     onVoiceSearch = onVoiceSearch,
-                    onOpenItem = onOpenItem,
+                    onOpenItem = { item ->
+                        restoreItemKey = item.key()
+                        onOpenItem(item)
+                    },
                     onToggleFavorite = onToggleFavorite,
                     onClearImageCache = onClearImageCache,
                     onHome = onHome,
                     onSettings = onSettings,
+                    rowListStates = rowListStates,
+                    restoreItemKey = restoreItemKey,
+                    onRestoreConsumed = { restoreItemKey = null },
                     listState = catalogListState,
                     requestInitialFocus = !catalogInitialFocusRequested,
                     onInitialFocusRequested = { catalogInitialFocusRequested = true }
@@ -1563,6 +1572,9 @@ private fun CatalogScreen(
     onClearImageCache: () -> Unit,
     onHome: () -> Unit,
     onSettings: () -> Unit,
+    rowListStates: MutableMap<String, LazyListState>,
+    restoreItemKey: String?,
+    onRestoreConsumed: () -> Unit,
     listState: LazyListState,
     requestInitialFocus: Boolean,
     onInitialFocusRequested: () -> Unit
@@ -1701,7 +1713,17 @@ private fun CatalogScreen(
                         key = { row -> row.title },
                         contentType = { "catalog-row" }
                     ) { row ->
-                        ContentRow(row, state.mode, state.favoriteKeys, onOpenItem, onToggleFavorite)
+                        val rowState = rowListStates.getOrPut(row.title) { LazyListState() }
+                        ContentRow(
+                            row = row,
+                            mode = state.mode,
+                            favoriteKeys = state.favoriteKeys,
+                            rowState = rowState,
+                            restoreItemKey = restoreItemKey,
+                            onRestoreConsumed = onRestoreConsumed,
+                            onOpenItem = onOpenItem,
+                            onToggleFavorite = onToggleFavorite
+                        )
                     }
                 }
             }
@@ -1714,12 +1736,23 @@ private fun ContentRow(
     row: XtreamModels.ContentRow,
     mode: Mode,
     favoriteKeys: Set<String>,
+    rowState: LazyListState,
+    restoreItemKey: String?,
+    onRestoreConsumed: () -> Unit,
     onOpenItem: (XtreamModels.StreamItem) -> Unit,
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit
 ) {
     val visibleTitle = displayRowTitle(row.title)
     val rowKind = premiumRowKind(row.title)
     val premium = rowKind != null
+    val restoreIndex = remember(row.items, restoreItemKey) {
+        restoreItemKey?.let { key -> row.items.indexOfFirst { item -> item.key() == key } } ?: -1
+    }
+    LaunchedEffect(restoreIndex) {
+        if (restoreIndex >= 0) {
+            rowState.scrollToItem(restoreIndex)
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             visibleTitle,
@@ -1728,6 +1761,7 @@ private fun ContentRow(
             style = if (premium) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium
         )
         LazyRow(
+            state = rowState,
             horizontalArrangement = Arrangement.spacedBy(if (premium) 14.dp else 12.dp),
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
         ) {
@@ -1744,6 +1778,8 @@ private fun ContentRow(
                     mode = mode,
                     rowTitle = visibleTitle,
                     favorite = favoriteKeys.contains(item.key()),
+                    restoreFocus = item.key() == restoreItemKey,
+                    onRestoreConsumed = onRestoreConsumed,
                     onClick = { onOpenItem(item) },
                     onLongClick = { onToggleFavorite(item) }
                 )
@@ -1859,6 +1895,8 @@ private fun ContentCard(
     mode: Mode? = null,
     rowTitle: String = "",
     favorite: Boolean = false,
+    restoreFocus: Boolean = false,
+    onRestoreConsumed: () -> Unit = {},
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
@@ -1887,10 +1925,20 @@ private fun ContentCard(
         else -> 252.dp
     }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val focusRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
+    LaunchedEffect(restoreFocus) {
+        if (restoreFocus) {
+            delay(90L)
+            focusRequester.requestFocus()
+            bringIntoViewRequester.bringIntoView()
+            onRestoreConsumed()
+        }
+    }
     varFocusedSurface(
         modifier = Modifier
             .bringIntoViewRequester(bringIntoViewRequester)
+            .focusRequester(focusRequester)
             .onFocusChanged { focusState ->
                 if (focusState.isFocused) {
                     scope.launch {

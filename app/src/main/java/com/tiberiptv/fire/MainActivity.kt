@@ -61,7 +61,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -404,6 +403,22 @@ data class PlaybackRequest(
     val remoteGuardLabel: String,
     val bufferedPlayback: Boolean = false
 )
+
+private enum class PremiumRowKind {
+    HISTORY,
+    FAVORITES,
+    FOUR_K,
+    TOP_RATED,
+    RECENT
+}
+
+private fun premiumRowPrefix(kind: PremiumRowKind): String = "__premium_${kind.name}__"
+
+private fun premiumRowKind(title: String): PremiumRowKind? =
+    PremiumRowKind.entries.firstOrNull { kind -> title.startsWith(premiumRowPrefix(kind)) }
+
+private fun displayRowTitle(title: String): String =
+    premiumRowKind(title)?.let { kind -> title.removePrefix(premiumRowPrefix(kind)) } ?: title
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
@@ -1258,8 +1273,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun withHistoryRow(rows: List<XtreamModels.ContentRow>): List<XtreamModels.ContentRow> {
+        val premiumRows = premiumRows(rows)
+        return if (premiumRows.isEmpty()) rows else premiumRows + rows
+    }
+
+    private fun premiumRows(rows: List<XtreamModels.ContentRow>): List<XtreamModels.ContentRow> {
+        val allItems = rows
+            .flatMap { row -> row.items.map { item -> row.title to item } }
+            .distinctBy { (_, item) -> item.key() }
         val history = stateStore.history(20)
-        return if (history.isEmpty()) rows else listOf(XtreamModels.ContentRow("Reprendre", history)) + rows
+        val favorites = stateStore.favorites()
+            .filter { favorite -> allItems.any { (_, item) -> item.key() == favorite.key() } }
+        val fourK = allItems
+            .filter { (rowTitle, item) -> isUltraHd(item, rowTitle) }
+            .map { (_, item) -> item }
+            .take(20)
+        val topRated = allItems
+            .map { (_, item) -> item }
+            .filter { item -> numericRating(item.rating) >= 7f }
+            .sortedByDescending { item -> numericRating(item.rating) }
+            .take(20)
+        val recent = allItems
+            .map { (_, item) -> item }
+            .filter { item -> item.addedTimestamp.toLongOrNull() != null }
+            .sortedByDescending { item -> item.addedTimestamp.toLongOrNull() ?: 0L }
+            .take(20)
+
+        return buildList {
+            addPremiumRow(PremiumRowKind.HISTORY, "Continuer à regarder", history)
+            addPremiumRow(PremiumRowKind.FAVORITES, "Mes favoris", favorites)
+            addPremiumRow(PremiumRowKind.FOUR_K, "Sélection 4K", fourK)
+            addPremiumRow(PremiumRowKind.TOP_RATED, "Top notes", topRated)
+            addPremiumRow(PremiumRowKind.RECENT, "Ajoutés récemment", recent)
+        }
+    }
+
+    private fun MutableList<XtreamModels.ContentRow>.addPremiumRow(
+        kind: PremiumRowKind,
+        title: String,
+        items: List<XtreamModels.StreamItem>
+    ) {
+        if (items.isNotEmpty()) {
+            add(XtreamModels.ContentRow("${premiumRowPrefix(kind)}$title", items))
+        }
     }
 
     private fun localFile(item: XtreamModels.StreamItem): File {
@@ -1604,9 +1660,7 @@ private fun CatalogScreen(
             StoragePanel(state, onClearImageCache)
         }
         if (state.loading) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
+            CatalogSkeleton()
         } else {
             val rows = remember(
                 state.rows,
@@ -1661,10 +1715,17 @@ private fun ContentRow(
     onOpenItem: (XtreamModels.StreamItem) -> Unit,
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit
 ) {
+    val visibleTitle = displayRowTitle(row.title)
+    val premium = premiumRowKind(row.title) != null
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(row.title, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+        Text(
+            visibleTitle,
+            color = if (premium) Color(0xFFF3F5FF) else Color.White,
+            fontWeight = FontWeight.Bold,
+            style = if (premium) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium
+        )
         LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (premium) 14.dp else 12.dp),
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
         ) {
             items(
@@ -1675,8 +1736,9 @@ private fun ContentRow(
                 ContentCard(
                     item = item,
                     compact = mode == Mode.LIVE,
+                    premium = premium,
                     mode = mode,
-                    rowTitle = row.title,
+                    rowTitle = visibleTitle,
                     favorite = favoriteKeys.contains(item.key()),
                     onClick = { onOpenItem(item) },
                     onLongClick = { onToggleFavorite(item) }
@@ -1686,11 +1748,58 @@ private fun ContentRow(
     }
 }
 
+@Composable
+private fun CatalogSkeleton() {
+    LazyColumn(
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 22.dp),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        items(4, key = { index -> "skeleton-$index" }) { rowIndex ->
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SkeletonBlock(
+                    modifier = Modifier
+                        .width(if (rowIndex == 0) 260.dp else 190.dp)
+                        .height(24.dp)
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(7, key = { index -> "skeleton-$rowIndex-$index" }) {
+                        SkeletonBlock(
+                            modifier = Modifier
+                                .width(168.dp)
+                                .height(330.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SkeletonBlock(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        Color(0xFF202640),
+                        Color(0xFF30385D),
+                        Color(0xFF202640)
+                    )
+                )
+            )
+            .border(1.dp, Color(0xFF363D63), RoundedCornerShape(10.dp))
+    )
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ContentCard(
     item: XtreamModels.StreamItem,
     compact: Boolean,
+    premium: Boolean = false,
     mode: Mode? = null,
     rowTitle: String = "",
     favorite: Boolean = false,
@@ -1703,9 +1812,21 @@ private fun ContentCard(
         if (mode == Mode.DOWNLOADS) downloadedSize(context, item) else -1L
     }
     val meta = if (localSize > 0L) "${metaLabel(item)} | ${formatBytes(localSize)}" else metaLabel(item)
-    val cardWidth = if (compact) 188.dp else 168.dp
-    val cardHeight = if (compact) 196.dp else 346.dp
-    val posterHeight = if (compact) 106.dp else 252.dp
+    val cardWidth = when {
+        compact -> 188.dp
+        premium -> 184.dp
+        else -> 168.dp
+    }
+    val cardHeight = when {
+        compact -> 196.dp
+        premium -> 366.dp
+        else -> 346.dp
+    }
+    val posterHeight = when {
+        compact -> 106.dp
+        premium -> 274.dp
+        else -> 252.dp
+    }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
     varFocusedSurface(
@@ -1770,11 +1891,21 @@ private fun DetailScreen(
     val isPreloading = state.preloadingItem?.key() == item.key()
     val isFavorite = state.favoriteKeys.contains(item.key())
     val isDownloaded = state.selectedDownloaded || state.mode == Mode.DOWNLOADS
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(28.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(Color(0x663653FF), Color.Transparent),
+                    radius = 760f
+                )
+            )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(28.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         DetailActionButton(label = "Retour", onClick = onBack, modifier = Modifier.width(116.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(22.dp), modifier = Modifier.fillMaxSize()) {
@@ -1786,8 +1917,15 @@ private fun DetailScreen(
                 modifier = Modifier.width(220.dp).aspectRatio(2f / 3f)
             )
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text(item.title, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text(metaLabel(item), color = Color(0xFFC9C6E4))
+                Text(
+                    item.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                DetailMetaPills(state, item, isDownloaded, isFavorite)
                 ContentSizeStatus(state, item)
                 state.error?.let { Text(it, color = Color(0xFFFFB4AB)) }
                 if (isDownloading) {
@@ -1851,7 +1989,7 @@ private fun DetailScreen(
                     }
                     val detail = state.selectedDetail
                     if (detail != null && detail.hasContent()) {
-                        Text(detailText(detail), color = Color.White, style = MaterialTheme.typography.bodyLarge)
+                        DetailInfoPanel(detailText(detail))
                     }
                     val series = state.seriesInfo
                     if (series != null) {
@@ -1874,6 +2012,92 @@ private fun DetailScreen(
             }
         }
     }
+    }
+}
+
+@Composable
+private fun DetailInfoPanel(text: String) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0xAA161B2F),
+        border = BorderStroke(1.dp, Color(0xFF343B60)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "Détails",
+                color = Color(0xFF47D3C2),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Black
+            )
+            Text(
+                text = text,
+                color = Color(0xFFF4F5FF),
+                style = MaterialTheme.typography.bodyLarge
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailMetaPills(
+    state: MainUiState,
+    item: XtreamModels.StreamItem,
+    downloaded: Boolean,
+    favorite: Boolean
+) {
+    val detail = state.selectedDetail
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        DetailMetaPill(metaLabel(item))
+        displayRating(detail?.rating, item.rating)?.let { rating ->
+            DetailMetaPill("★ $rating", accent = Color(0xFFFFD166), foreground = Color(0xFF191100))
+        }
+        if (isUltraHd(item, state.selectedQualityHint)) {
+            DetailMetaPill("4K", accent = Color(0xFF47D3C2), foreground = Color(0xFF071412))
+        }
+        item.year.takeIf { it.isNotBlank() }?.let { year ->
+            DetailMetaPill(year)
+        }
+        detail?.duration?.takeIf { it.isNotBlank() }?.let { duration ->
+            DetailMetaPill(duration)
+        }
+        detail?.genre?.takeIf { it.isNotBlank() }?.let { genre ->
+            DetailMetaPill(genre)
+        }
+        if (downloaded) {
+            DetailMetaPill("Local", accent = Color(0xFF8FA2FF), foreground = Color(0xFF090B18))
+        }
+        if (favorite) {
+            DetailMetaPill("Favori", accent = Color(0xFFFF5F87), foreground = Color.White)
+        }
+    }
+}
+
+@Composable
+private fun DetailMetaPill(
+    text: String,
+    accent: Color = Color(0xFF262B48),
+    foreground: Color = Color(0xFFE9ECFF)
+) {
+    Text(
+        text = text,
+        color = foreground,
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(accent)
+            .padding(horizontal = 12.dp, vertical = 7.dp)
+    )
 }
 
 @Composable
@@ -2550,7 +2774,11 @@ private fun PosterWithBadges(
     favorite: Boolean = false
 ) {
     BoxWithConstraints(modifier) {
-        Poster(url = item.imageUrl, modifier = Modifier.fillMaxSize())
+        Poster(
+            url = item.imageUrl,
+            title = item.title,
+            modifier = Modifier.fillMaxSize()
+        )
         if (favorite) {
             val heartSize = when {
                 maxWidth < 150.dp -> 22.dp
@@ -2617,27 +2845,75 @@ private fun PosterBadge(
 }
 
 @Composable
-private fun Poster(url: String?, modifier: Modifier) {
+private fun Poster(url: String?, title: String, modifier: Modifier) {
     val context = LocalContext.current
     val loader = remember { PosterLoader(context) }
+    val cleanUrl = url?.trim().orEmpty()
     DisposableEffect(loader) {
         onDispose { loader.shutdown() }
     }
-    AndroidView(
+    Box(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF232640))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        Color(0xFF2A2F55),
+                        Color(0xFF15182A),
+                        Color(0xFF232640)
+                    )
+                )
+            )
             .border(1.dp, Color(0xFF333656), RoundedCornerShape(8.dp)),
-        factory = { ctx ->
-            ImageView(ctx).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                setBackgroundColor(0xFF232640.toInt())
-            }
-        },
-        update = { imageView ->
-            loader.load(url, imageView, 0xFF232640.toInt())
+        contentAlignment = Alignment.Center
+    ) {
+        if (cleanUrl.isBlank()) {
+            PosterFallback(title = title)
+        } else {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    ImageView(ctx).apply {
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        setBackgroundColor(0x00000000)
+                    }
+                },
+                update = { imageView ->
+                    loader.load(cleanUrl, imageView, 0x00000000)
+                }
+            )
         }
-    )
+    }
+}
+
+@Composable
+private fun PosterFallback(title: String) {
+    Column(
+        modifier = Modifier.padding(14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = title.take(1).uppercase(Locale.FRANCE).ifBlank { "T" },
+            color = Color(0xFF47D3C2),
+            style = MaterialTheme.typography.headlineLarge,
+            fontWeight = FontWeight.Black
+        )
+        Text(
+            text = title,
+            color = Color(0xFFE8EAFB),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = "Affiche indisponible",
+            color = Color(0xFF9EA7CD),
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1
+        )
+    }
 }
 
 private fun filteredRows(
@@ -2651,7 +2927,8 @@ private fun filteredRows(
     val clean = query.trim().lowercase(Locale.US)
     val recentYearFloor = Calendar.getInstance().get(Calendar.YEAR) - 1
     return rows.mapNotNull { row ->
-        val rowMatchesQuery = clean.isEmpty() || row.title.lowercase(Locale.US).contains(clean)
+        val visibleRowTitle = displayRowTitle(row.title)
+        val rowMatchesQuery = clean.isEmpty() || visibleRowTitle.lowercase(Locale.US).contains(clean)
         val items = row.items
             .filter { item ->
                 val queryMatches = rowMatchesQuery ||

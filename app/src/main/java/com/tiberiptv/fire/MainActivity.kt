@@ -31,6 +31,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -1638,7 +1640,11 @@ private fun CatalogScreen(
                     contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 22.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(rows, key = { row -> row.title }) { row ->
+                    items(
+                        rows,
+                        key = { row -> row.title },
+                        contentType = { "catalog-row" }
+                    ) { row ->
                         ContentRow(row, state.mode, state.favoriteKeys, onOpenItem, onToggleFavorite)
                     }
                 }
@@ -1661,7 +1667,11 @@ private fun ContentRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
         ) {
-            items(row.items, key = { item -> item.key() }) { item ->
+            items(
+                row.items,
+                key = { item -> item.key() },
+                contentType = { item -> item.type }
+            ) { item ->
                 ContentCard(
                     item = item,
                     compact = mode == Mode.LIVE,
@@ -1791,58 +1801,49 @@ private fun DetailScreen(
                     )
                 } else {
                     val canPlay = isDownloaded || item.playable || item.type == XtreamModels.StreamItem.TYPE_LIVE
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
-                    ) {
-                        item {
-                            DetailActionButton(
-                                label = if (state.selectedResumePositionMs > PlaybackPolicy.RESUME_THRESHOLD_MS) "Reprendre" else "Lire",
-                                enabled = canPlay,
-                                primary = true,
-                                onClick = { onPlay(item) }
-                            )
-                        }
-                        if (state.selectedResumePositionMs > PlaybackPolicy.RESUME_THRESHOLD_MS) {
-                            item {
+                    val hasResume = state.selectedResumePositionMs > PlaybackPolicy.RESUME_THRESHOLD_MS
+                    val trailer = state.selectedDetail?.trailer.orEmpty()
+                    val showFavoriteAction = !isDownloaded
+                    DetailActionGroup {
+                        DetailActionButton(
+                            label = if (hasResume) "Reprendre" else "Lire",
+                            enabled = canPlay,
+                            primary = true,
+                            onClick = { onPlay(item) }
+                        )
+                        if (hasResume) {
                                 DetailActionButton(
                                     label = "Depuis début",
                                     enabled = canPlay,
                                     onClick = { onPlayFromStart(item) }
                                 )
-                            }
                         }
-                        if (isDownloaded) {
-                            item {
+                        if (trailer.isNotBlank()) {
+                            DetailActionButton(label = "Bande-annonce", onClick = { onTrailer(item.title, trailer) })
+                        }
+                        if (showFavoriteAction) {
+                            DetailActionButton(
+                                label = if (isFavorite) "Favori ✓" else "Favori",
+                                onClick = { onFavorite(item) }
+                            )
+                        }
+                    }
+                    if (isDownloaded) {
+                        DetailActionGroup {
                                 DetailActionButton(
                                     label = "Supprimer",
                                     destructive = true,
                                     onClick = { onDeleteDownload(item) }
                                 )
-                            }
-                        } else {
-                            if (item.type != XtreamModels.StreamItem.TYPE_SERIES) {
-                                item {
-                                    DetailActionButton(label = "Tamponner", onClick = { onPreload(item) })
-                                }
-                            }
-                            val trailer = state.selectedDetail?.trailer.orEmpty()
-                            if (trailer.isNotBlank()) {
-                                item {
-                                    DetailActionButton(label = "Bande-annonce", onClick = { onTrailer(item.title, trailer) })
-                                }
-                            }
-                            if (item.type != XtreamModels.StreamItem.TYPE_LIVE && item.type != XtreamModels.StreamItem.TYPE_SERIES) {
-                                item {
-                                    DetailActionButton(label = "Télécharger", onClick = { onDownload(item) })
-                                }
-                            }
-                            item {
-                                DetailActionButton(
-                                    label = if (isFavorite) "Retirer favori" else "Ajouter favori",
-                                    onClick = { onFavorite(item) }
-                                )
-                            }
+                        }
+                    } else if (item.type != XtreamModels.StreamItem.TYPE_LIVE && item.type != XtreamModels.StreamItem.TYPE_SERIES) {
+                        DetailActionGroup(title = "Préchargé") {
+                            DetailActionButton(label = "Tamponner", onClick = { onPreload(item) })
+                            DetailActionButton(label = "Télécharger", onClick = { onDownload(item) })
+                        }
+                    } else if (item.type == XtreamModels.StreamItem.TYPE_LIVE) {
+                        DetailActionGroup(title = "Préchargé") {
+                            DetailActionButton(label = "Tamponner", onClick = { onPreload(item) })
                         }
                     }
                     if (isDownloaded) {
@@ -1894,6 +1895,31 @@ private fun ContentSizeStatus(
         },
         color = Color.White
     )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailActionGroup(
+    title: String? = null,
+    content: @Composable () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (!title.isNullOrBlank()) {
+            Text(
+                text = title,
+                color = Color(0xFFC9C6E4),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            content()
+        }
+    }
 }
 
 @Composable

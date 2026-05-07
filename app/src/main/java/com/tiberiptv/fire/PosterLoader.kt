@@ -29,11 +29,17 @@ class PosterLoader(context: Context) {
     }
 
     fun load(url: String?, target: ImageView, placeholderColor: Int) {
-        target.setImageDrawable(null)
-        target.setBackgroundColor(placeholderColor)
         val key = url?.trim().orEmpty()
         if (key.isEmpty()) {
-            target.tag = null
+            if (target.tag != null || target.drawable != null) {
+                target.setImageDrawable(null)
+                target.setBackgroundColor(placeholderColor)
+                target.tag = null
+            }
+            return
+        }
+
+        if (target.tag == key && target.drawable != null) {
             return
         }
 
@@ -43,6 +49,8 @@ class PosterLoader(context: Context) {
             return
         }
 
+        target.setImageDrawable(null)
+        target.setBackgroundColor(placeholderColor)
         executor.execute {
             var bitmap = readFromDisk(key)
             if (bitmap == null) {

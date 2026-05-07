@@ -1,0 +1,20 @@
+# Added by code-review-graph
+.code-review-graph/
+
+# Android / Gradle
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+release/
+
+# Local agent / IDE assistant state
+.claude/
+.codex/
+.kiro/
+.mcp.json
+.opencode.json
+.cursorrules
+.windsurfrules

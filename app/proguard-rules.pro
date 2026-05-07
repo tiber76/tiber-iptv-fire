@@ -1,0 +1,4 @@
+-keep class org.videolan.** { *; }
+-dontwarn org.videolan.**
+-keep class androidx.room.** { *; }
+-dontwarn androidx.room.**

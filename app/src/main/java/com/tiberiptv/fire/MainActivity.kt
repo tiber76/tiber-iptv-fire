@@ -50,6 +50,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -1750,8 +1751,13 @@ private fun CatalogScreen(
                 CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(82.dp), onClick = onSettings)
             }
             HeaderDownloadStatus(state)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Mode.entries.forEachIndexed { index, mode ->
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                contentPadding = PaddingValues(horizontal = 3.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                itemsIndexed(Mode.entries, key = { _, mode -> mode.name }) { index, mode ->
                     TvChip(
                         label = mode.label,
                         selected = state.mode == mode,
@@ -1759,22 +1765,27 @@ private fun CatalogScreen(
                         onClick = { onMode(mode) }
                     )
                 }
-                Spacer(Modifier.weight(1f))
-                TvSearchButton(
-                    query = state.query,
-                    modifier = Modifier.width(190.dp),
-                    onClick = { searchDialogVisible = true }
-                )
-                TvChip(
-                    selected = filtersExpanded || activeFilterCount > 0,
-                    onClick = { filtersExpanded = !filtersExpanded },
-                    label = if (activeFilterCount > 0) "Filtres $activeFilterCount" else "Filtres"
-                )
-                TvChip(
-                    selected = hasCustomSort,
-                    onClick = { onCatalogSort(state.catalogSort.next()) },
-                    label = "Tri ${state.catalogSort.label}"
-                )
+                item("search") {
+                    TvSearchButton(
+                        query = state.query,
+                        modifier = Modifier.width(168.dp),
+                        onClick = { searchDialogVisible = true }
+                    )
+                }
+                item("filters") {
+                    TvChip(
+                        selected = filtersExpanded || activeFilterCount > 0,
+                        onClick = { filtersExpanded = !filtersExpanded },
+                        label = if (activeFilterCount > 0) "Filtres $activeFilterCount" else "Filtres"
+                    )
+                }
+                item("sort") {
+                    TvChip(
+                        selected = hasCustomSort,
+                        onClick = { onCatalogSort(state.catalogSort.next()) },
+                        label = "Tri ${state.catalogSort.label}"
+                    )
+                }
             }
             if (!filtersExpanded && hasCatalogControls) {
                 ActiveCatalogControlSummary(
@@ -1786,6 +1797,7 @@ private fun CatalogScreen(
             if (filtersExpanded) {
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    contentPadding = PaddingValues(horizontal = 3.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     item {
@@ -3239,17 +3251,28 @@ private fun StorageMetricRow(label: String, bytes: Long) {
 @Composable
 private fun TvChip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     varFocusedSurface(
-        modifier = modifier.clickable(onClick = onClick).focusable(),
+        modifier = modifier
+            .height(30.dp)
+            .clickable(onClick = onClick)
+            .focusable(),
         selected = selected,
         shape = RoundedCornerShape(10.dp)
     ) {
-        Text(
-            label,
-            color = Color.White,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
-        )
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(horizontal = 9.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                label,
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 

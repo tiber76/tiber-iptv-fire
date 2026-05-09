@@ -86,6 +86,9 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -1992,6 +1995,7 @@ private fun ContentCard(
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val focusRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
+    var remoteLongClickHandled by remember { mutableStateOf(false) }
     LaunchedEffect(restoreFocus) {
         if (restoreFocus) {
             delay(90L)
@@ -2004,6 +2008,25 @@ private fun ContentCard(
         modifier = Modifier
             .bringIntoViewRequester(bringIntoViewRequester)
             .focusRequester(focusRequester)
+            .onPreviewKeyEvent { event ->
+                val native = event.nativeKeyEvent
+                val isConfirmKey = native.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                    native.keyCode == KeyEvent.KEYCODE_ENTER
+                if (!isConfirmKey || onLongClick == null) {
+                    false
+                } else when {
+                    event.type == KeyEventType.KeyDown && native.repeatCount == 1 -> {
+                        remoteLongClickHandled = true
+                        onLongClick.invoke()
+                        true
+                    }
+                    event.type == KeyEventType.KeyUp && remoteLongClickHandled -> {
+                        remoteLongClickHandled = false
+                        true
+                    }
+                    else -> false
+                }
+            }
             .onFocusChanged { focusState ->
                 if (focusState.isFocused) {
                     onFocused()

@@ -764,7 +764,7 @@ class PlayerActivity : Activity() {
             .append("Buffer: ").append(stateStore.playerBufferMs()).append(" ms\n")
             .append("Remote: ").append(remoteGuardLabel ?: "local").append("\n")
             .append("Fallback utilisé: ").append(if (usedFallback) "oui" else "non").append("\n")
-            .append("Déplacement: ").append(if (canSeekPlayback()) "actif" else "limité tant que le tampon n'est pas complet").append("\n\n")
+            .append("Déplacement: ").append(if (canSeekPlayback()) "actif" else "limité tant que le préchargement n'est pas complet").append("\n\n")
         message.append("Moteur\nLibVLC 3.7.0 avec décodage logiciel audio\n\n")
         val currentPlayer = player
         if (currentPlayer != null) {
@@ -787,7 +787,7 @@ class PlayerActivity : Activity() {
         }
         if (preloadProxy) {
             val tampon = PreloadStreamServer.status()
-            message.append("\nTampon\n")
+            message.append("\nPréchargement\n")
                 .append("Avance: ").append(formatBytes(tampon.aheadBytes)).append("\n")
                 .append("Téléchargé: ").append(formatBytes(tampon.downloadedBytes)).append(totalSuffix(tampon.totalBytes)).append("\n")
                 .append("Complet: ").append(if (tampon.complete) "oui" else "non").append("\n")
@@ -804,7 +804,7 @@ class PlayerActivity : Activity() {
             .append("Etat: ").append(if (lastPlaybackIssue.isBlank()) playbackStatus().ifBlank { "chargement" } else lastPlaybackIssue).append("\n")
             .append("Buffer: ").append(stateStore.playerBufferMs()).append(" ms\n")
             .append("Affichage: ").append(displayMode.label).append("\n")
-            .append("Déplacement: ").append(if (canSeekPlayback()) "actif" else "attente tampon complet").append("\n")
+            .append("Déplacement: ").append(if (canSeekPlayback()) "actif" else "attente préchargement complet").append("\n")
         player?.currentVideoTrack?.let { track ->
             message.append("Vidéo: ")
                 .append(track.width)
@@ -819,7 +819,7 @@ class PlayerActivity : Activity() {
         }
         if (preloadProxy) {
             val tampon = PreloadStreamServer.status()
-            message.append("\nTampon\n")
+            message.append("\nPréchargement\n")
                 .append("Avance: ").append(formatBytes(tampon.aheadBytes)).append("\n")
                 .append("Téléchargé: ").append(formatBytes(tampon.downloadedBytes)).append(totalSuffix(tampon.totalBytes)).append("\n")
                 .append("Seek: ").append(if (tampon.complete) "actif" else "désactivé temporairement").append("\n")
@@ -833,9 +833,9 @@ class PlayerActivity : Activity() {
     private fun playbackErrorMessage(): String {
         val tamponError = if (preloadProxy) PreloadStreamServer.status().errorMessage else null
         return when {
-            tamponError != null -> "Tampon interrompu: $tamponError"
+            tamponError != null -> "Préchargement interrompu: $tamponError"
             preloadProxy && !PreloadStreamServer.status().complete ->
-                "Tampon insuffisant: le cache local n'a pas encore assez de données."
+                "Préchargement insuffisant: le cache local n'a pas encore assez de données."
             !playbackStarted && lastBufferingPercent <= 0f ->
                 "Flux indisponible: aucune donnée reçue."
             !playbackStarted ->
@@ -847,9 +847,9 @@ class PlayerActivity : Activity() {
 
     private fun playbackErrorHint(): String =
         when {
-            preloadProxy -> "Attends un tampon plus avancé, ou convertis en téléchargement complet si le réseau est lent."
+            preloadProxy -> "Attends un préchargement plus avancé, ou convertis en téléchargement complet si le réseau est lent."
             !usedFallback && !fallbackStreamUrl.isNullOrBlank() -> "Essaie Relancer: l'app peut tenter le format alternatif du flux."
-            isRemotePlaybackUrl(streamUrl) -> "Vérifie VPN/débit, puis essaie Relancer. Si le flux refuse VLC, tente Télécharger ou Tamponner depuis la fiche."
+            isRemotePlaybackUrl(streamUrl) -> "Vérifie VPN/débit, puis essaie Relancer. Si le flux refuse VLC, tente Télécharger ou Précharger depuis la fiche."
             else -> "Le fichier local peut être incomplet ou illisible. Supprime-le puis relance un téléchargement si besoin."
         }
 
@@ -925,7 +925,7 @@ class PlayerActivity : Activity() {
         userSeeking = true
         seekBar.progress = max(0L, min(1_000L, scrubTargetTimeMs * 1_000L / length)).toInt()
         updateTimeLabel(seekBar.progress)
-        val label = if (blockedByBuffer) "Hors tampon disponible" else seekLabel(scrubTargetTimeMs - scrubStartTimeMs)
+        val label = if (blockedByBuffer) "Hors zone préchargée" else seekLabel(scrubTargetTimeMs - scrubStartTimeMs)
         showSeekOverlay(label, scrubTargetTimeMs, length, hold = event.repeatCount > 0)
     }
 
@@ -1075,7 +1075,7 @@ class PlayerActivity : Activity() {
 
     private fun showSeekUnavailable() {
         val reason = when {
-            preloadProxy && !PreloadStreamServer.isComplete() -> "Position hors tampon disponible"
+            preloadProxy && !PreloadStreamServer.isComplete() -> "Position hors zone préchargée"
             (player?.length ?: 0L) <= 0L -> "Avance non disponible sur le direct"
             else -> "Avance non disponible"
         }
@@ -1085,7 +1085,7 @@ class PlayerActivity : Activity() {
         if (::playerHintView.isInitialized) {
             playerHintView.text = when {
                 preloadProxy && !PreloadStreamServer.isComplete() ->
-                    "Tampon incomplet: lecture OK, déplacement disponible quand le tampon est complet"
+                    "Préchargement incomplet: lecture OK, déplacement disponible quand le préchargement est complet"
                 else ->
                     "Flux sans durée connue: avance/retour désactivés"
             }
@@ -1102,30 +1102,30 @@ class PlayerActivity : Activity() {
         tamponStatusView.visibility = View.VISIBLE
         tamponStatusView.text = when {
             status.errorMessage != null ->
-                "Tampon: erreur ${status.errorMessage}"
+                "Préchargement: erreur ${status.errorMessage}"
             status.complete ->
-                "Tampon complet - navigation libre"
+                "Préchargement complet - navigation libre"
             status.convertingToDownload ->
                 "Conversion en téléchargement: ${formatBytes(status.downloadedBytes)}${totalSuffix(status.totalBytes)}"
             else -> {
                 val safePosition = safeBufferedPositionMs(player?.length ?: 0L)
                 if (safePosition > 0L) {
-                    "Tampon: ${formatBytes(status.aheadBytes)} d'avance - seek disponible jusqu'à ${formatTime(safePosition)}"
+                    "Préchargement: ${formatBytes(status.aheadBytes)} d'avance - seek disponible jusqu'à ${formatTime(safePosition)}"
                 } else {
-                    "Tampon: ${formatBytes(status.aheadBytes)} d'avance - navigation limitée"
+                    "Préchargement: ${formatBytes(status.aheadBytes)} d'avance - navigation limitée"
                 }
             }
         }
         when {
-            status.errorMessage != null -> updateQualitySummary("Erreur tampon", QualityState.ERROR)
-            status.complete -> updateQualitySummary("Tampon OK", QualityState.GOOD)
-            status.aheadBytes > 0L -> updateQualitySummary("Tampon ${formatBytes(status.aheadBytes)}", QualityState.WARNING)
+            status.errorMessage != null -> updateQualitySummary("Erreur préchargement", QualityState.ERROR)
+            status.complete -> updateQualitySummary("Préchargement OK", QualityState.GOOD)
+            status.aheadBytes > 0L -> updateQualitySummary("Précharge ${formatBytes(status.aheadBytes)}", QualityState.WARNING)
         }
         if (::playerHintView.isInitialized) {
             playerHintView.text = if (status.complete) {
                 playerHintText()
             } else {
-                "OK pause/lecture • ←/→ dans la zone tamponnée • hors zone indisponible"
+                "OK pause/lecture • ←/→ dans la zone préchargée • hors zone indisponible"
             }
         }
     }
@@ -1166,7 +1166,7 @@ class PlayerActivity : Activity() {
 
     private fun playerHintText(): String =
         if (preloadProxy && !PreloadStreamServer.isComplete()) {
-            "OK pause/lecture • ↑ boutons • ↓ barre • seek après tampon complet"
+            "OK pause/lecture • ↑ boutons • ↓ barre • seek après préchargement complet"
         } else {
             "OK pause/lecture • ↑ boutons • ↓ barre • ← -15s / → +30s • maintenir pour avancer • Retour masque"
         }
@@ -1175,7 +1175,7 @@ class PlayerActivity : Activity() {
         val track = player?.currentVideoTrack
         return when {
             lastPlaybackIssue.isNotBlank() -> "Erreur flux"
-            preloadProxy && !PreloadStreamServer.isComplete() -> "Tampon actif"
+            preloadProxy && !PreloadStreamServer.isComplete() -> "Préchargement actif"
             track != null && track.width > 0 && track.height > 0 -> "${track.width}p"
             playbackStarted -> "Flux OK"
             lastBufferingPercent > 0f -> String.format(Locale.US, "Buffer %.0f%%", lastBufferingPercent)

@@ -39,7 +39,7 @@ object PreloadStreamServer {
     @Throws(Exception::class)
     fun start(context: Context, remoteUrl: String, maxAheadBytes: Long): Session {
         if (RemoteActionGuard.activeLabel() != RemoteLabels.BUFFER) {
-            throw IllegalStateException(UserFacingMessages.remoteGuardUnavailable("Tampon"))
+            throw IllegalStateException(UserFacingMessages.remoteGuardUnavailable("Préchargement"))
         }
         synchronized(staticLock) {
             stop()
@@ -171,7 +171,7 @@ object PreloadStreamServer {
 
         fun copyCacheTo(target: File) {
             if (!complete) {
-                throw IllegalStateException("Tampon incomplet.")
+                throw IllegalStateException("Préchargement incomplet.")
             }
             target.parentFile?.mkdirs()
             cacheFile.copyTo(target, overwrite = true)

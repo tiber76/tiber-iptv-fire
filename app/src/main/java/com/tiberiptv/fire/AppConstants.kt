@@ -27,7 +27,7 @@ internal object UserFacingMessages {
             normalized.isEmpty() -> "une autre action"
             normalized == RemoteLabels.POSTER -> "le chargement des affiches"
             normalized == RemoteLabels.PLAYBACK -> "une lecture"
-            normalized == RemoteLabels.BUFFER -> "un tampon"
+            normalized == RemoteLabels.BUFFER -> "un préchargement"
             normalized == RemoteLabels.DOWNLOAD -> "un téléchargement"
             normalized == RemoteLabels.TRAILER -> "l'ouverture d'une bande-annonce"
             normalized == RemoteLabels.LOGIN -> "la connexion au compte"

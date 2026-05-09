@@ -280,9 +280,9 @@ enum class CatalogSort(val label: String) {
 }
 
 enum class PreloadMode(val label: String) {
-    NORMAL("Tamponner"),
-    LONG("Tampon long"),
-    COMPLETE("Tampon complet")
+    NORMAL("Précharger"),
+    LONG("Précharger plus"),
+    COMPLETE("Précharger complet")
 }
 
 enum class NetworkProfile(
@@ -307,7 +307,7 @@ enum class NetworkProfile(
         "m3u8",
         250L * 1024L * 1024L,
         BUFFER_LONG_AHEAD_BYTES,
-        "Tampon long avant lecture et live M3U8 pour les routes réseau variables."
+        "Préchargement long avant lecture et live M3U8 pour les routes réseau variables."
     ),
     SLOW(
         "Connexion lente",
@@ -707,7 +707,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     preloadTotal = -1L,
                     preloadCancelling = false,
                     preloadConverting = false,
-                    status = "Lecture depuis le tampon"
+                    status = "Lecture depuis le préchargement"
                 )
             }
             return PlaybackRequest(preloadSession.localUrl(), "", RemoteLabels.BUFFER, bufferedPlayback = true)
@@ -748,7 +748,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val api = api ?: return
         cleanupBufferedPlaybackIfIdle()
         if (item.type == XtreamModels.StreamItem.TYPE_SERIES) {
-            _uiState.update { it.copy(error = "Choisis un épisode avant de tamponner.") }
+            _uiState.update { it.copy(error = "Choisis un épisode avant de précharger.") }
             return
         }
         val profile = stateStore.networkProfile()
@@ -760,7 +760,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             _uiState.update {
                 it.withStorage(storage).copy(
-                    error = "Stockage trop bas pour tamponner: ${formatBytes(storage.availableBytes)} libres."
+                    error = "Stockage trop bas pour précharger: ${formatBytes(storage.availableBytes)} libres."
                 )
             }
             return
@@ -770,11 +770,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (preloadJob?.isActive == true || PreloadStreamServer.isActive()) {
-            _uiState.update { it.copy(error = "Tampon déjà en cours.") }
+            _uiState.update { it.copy(error = "Préchargement déjà en cours.") }
             return
         }
         if (!RemoteActionGuard.tryAcquire(RemoteLabels.BUFFER)) {
-            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Tampon")) }
+            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Préchargement")) }
             return
         }
 
@@ -816,9 +816,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val speedMbps = downloaded * 8.0 / elapsedMs / 1000.0
                         val slowWarning = elapsedMs > 15_000L && downloaded < 8L * 1024L * 1024L
                         val status = if (slowWarning) {
-                            "Tampon lent (${String.format(Locale.US, "%.1f", speedMbps)} Mbps)"
+                            "Préchargement lent (${String.format(Locale.US, "%.1f", speedMbps)} Mbps)"
                         } else {
-                            "Tampon ${formatBytes(downloaded)}"
+                            "Préchargé ${formatBytes(downloaded)}"
                         }
                         it.copy(
                             preloadingItem = item,
@@ -836,10 +836,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     delay(500L)
                 }
                 if (preloadCancelRequested) {
-                    throw InterruptedException("Tampon annulé")
+                    throw InterruptedException("Préchargement annulé")
                 }
                 if (session.downloadedBytes() <= 0L) {
-                    throw IllegalStateException("Tampon trop lent.")
+                    throw IllegalStateException("Préchargement trop lent.")
                 }
                 ready = true
                 _uiState.update {
@@ -852,7 +852,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         preloadModeLabel = preloadMode.label,
                         preloadCancelling = false,
                         preloadConverting = false,
-                        status = "Tampon prêt"
+                        status = "Préchargement prêt"
                     )
                 }
             } catch (exception: Exception) {
@@ -871,8 +871,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             preloadTotal = -1L,
                             preloadCancelling = false,
                             preloadConverting = false,
-                            error = if (preloadCancelRequested) null else "Tampon impossible: ${exception.message ?: exception.javaClass.simpleName}",
-                            status = if (preloadCancelRequested) "Tampon annulé" else "Erreur tampon"
+                            error = if (preloadCancelRequested) null else "Préchargement impossible: ${exception.message ?: exception.javaClass.simpleName}",
+                            status = if (preloadCancelRequested) "Préchargement annulé" else "Erreur préchargement"
                         )
                     }
                 }
@@ -888,11 +888,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun convertPreloadToDownload(item: XtreamModels.StreamItem) {
         val session = activePreloadSession
         if (session == null || activePreloadItem?.key() != item.key()) {
-            _uiState.update { it.copy(error = "Aucun tampon prêt pour ce contenu.") }
+            _uiState.update { it.copy(error = "Aucun préchargement prêt pour ce contenu.") }
             return
         }
         if (RemoteActionGuard.activeLabel() != RemoteLabels.BUFFER) {
-            _uiState.update { it.copy(error = UserFacingMessages.remoteGuardUnavailable("Conversion du tampon")) }
+            _uiState.update { it.copy(error = UserFacingMessages.remoteGuardUnavailable("Conversion du préchargement")) }
             return
         }
         if (downloadJob?.isActive == true || preloadJob?.isActive == true) {
@@ -922,7 +922,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 preloadConverting = true,
                 selectedItem = item,
                 error = null,
-                status = "Conversion du tampon en téléchargement"
+                status = "Conversion du préchargement en téléchargement"
             )
         }
         preloadJob = viewModelScope.launch {
@@ -970,7 +970,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         preloadConverting = false,
                         selectedSizeBytes = target.length(),
                         rows = if (it.mode == Mode.DOWNLOADS) downloadRows() else it.rows,
-                        status = "Téléchargement terminé depuis le tampon"
+                        status = "Téléchargement terminé depuis le préchargement"
                     )
                 }
             } catch (exception: Exception) {
@@ -1146,7 +1146,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancelPreload() {
         preloadCancelRequested = true
-        _uiState.update { it.copy(preloadCancelling = true, status = "Annulation du tampon...") }
+        _uiState.update { it.copy(preloadCancelling = true, status = "Annulation du préchargement...") }
         activePreloadSession?.stop()
         PreloadStreamServer.stop()
         RemoteActionGuard.release(RemoteLabels.BUFFER)
@@ -1161,7 +1161,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 preloadTotal = -1L,
                 preloadCancelling = false,
                 preloadConverting = false,
-                status = "Tampon annulé"
+                status = "Préchargement annulé"
             )
         }
     }
@@ -2215,16 +2215,20 @@ private fun DetailScreen(
                                 )
                         }
                     } else if (item.type != XtreamModels.StreamItem.TYPE_LIVE && item.type != XtreamModels.StreamItem.TYPE_SERIES) {
-                        DetailActionGroup(title = "Préchargé") {
-                            DetailActionButton(label = "Tamponner", onClick = { onPreload(item, PreloadMode.NORMAL) })
-                            DetailActionButton(label = "Tampon long", onClick = { onPreload(item, PreloadMode.LONG) })
-                            DetailActionButton(label = "Tampon complet", onClick = { onPreload(item, PreloadMode.COMPLETE) })
+                        PreloadHelpText(canOfferCompletePreload = canOfferCompletePreload(state))
+                        DetailActionGroup(title = "Précharger avant lecture") {
+                            DetailActionButton(label = PreloadMode.NORMAL.label, onClick = { onPreload(item, PreloadMode.NORMAL) })
+                            DetailActionButton(label = PreloadMode.LONG.label, onClick = { onPreload(item, PreloadMode.LONG) })
+                            if (canOfferCompletePreload(state)) {
+                                DetailActionButton(label = PreloadMode.COMPLETE.label, onClick = { onPreload(item, PreloadMode.COMPLETE) })
+                            }
                             DetailActionButton(label = "Télécharger", onClick = { onDownload(item) })
                         }
                     } else if (item.type == XtreamModels.StreamItem.TYPE_LIVE) {
-                        DetailActionGroup(title = "Préchargé") {
-                            DetailActionButton(label = "Tamponner", onClick = { onPreload(item, PreloadMode.NORMAL) })
-                            DetailActionButton(label = "Tampon long", onClick = { onPreload(item, PreloadMode.LONG) })
+                        PreloadHelpText(canOfferCompletePreload = false, completeSupported = false)
+                        DetailActionGroup(title = "Précharger le direct") {
+                            DetailActionButton(label = PreloadMode.NORMAL.label, onClick = { onPreload(item, PreloadMode.NORMAL) })
+                            DetailActionButton(label = PreloadMode.LONG.label, onClick = { onPreload(item, PreloadMode.LONG) })
                         }
                     }
                     if (isDownloaded) {
@@ -2382,6 +2386,35 @@ private fun ContentSizeStatus(
     )
 }
 
+@Composable
+private fun PreloadHelpText(canOfferCompletePreload: Boolean, completeSupported: Boolean = true) {
+    val text = when {
+        canOfferCompletePreload ->
+            "Précharge une avance pour éviter les coupures. Le contenu n'est pas conservé, sauf conversion en téléchargement."
+        completeSupported ->
+            "Précharge une avance pour éviter les coupures. Le mode complet apparaît seulement si le stockage disponible le permet."
+        else ->
+            "Précharge une avance pour éviter les coupures si le réseau est instable."
+    }
+    Text(
+        text = text,
+        color = Color(0xFFC9C6E4),
+        style = MaterialTheme.typography.bodySmall,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis
+    )
+}
+
+private fun canOfferCompletePreload(state: MainUiState): Boolean {
+    val contentSize = state.selectedSizeBytes
+    val available = state.storageAvailableBytes
+    if (contentSize <= 0L || available <= 0L) {
+        return false
+    }
+    val required = contentSize + StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES
+    return required > contentSize && available >= required
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DetailActionGroup(
@@ -2517,12 +2550,17 @@ private fun PreloadOnlyActions(
     val readyBytes = state.preloadReadyBytes.takeIf { it > 0L } ?: state.networkProfile.preloadReadyBytes
     val aheadBytes = state.preloadAheadBytes.takeIf { it > 0L } ?: state.networkProfile.preloadAheadBytes
     val ready = state.preloadBytes >= readyBytes
-    val modeLabel = state.preloadModeLabel.ifBlank { "Tampon" }
+    val modeLabel = state.preloadModeLabel.ifBlank { PreloadMode.NORMAL.label }
+    val readyLabel = when (modeLabel) {
+        PreloadMode.LONG.label -> "Préchargement avancé prêt"
+        PreloadMode.COMPLETE.label -> "Préchargement complet prêt"
+        else -> "Préchargement prêt"
+    }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.widthIn(max = 520.dp)) {
         Text(
             when {
                 state.preloadConverting -> "Conversion en téléchargement"
-                ready -> "$modeLabel prêt"
+                ready -> readyLabel
                 else -> "Pré-chargement du film en cours"
             },
             color = Color.White,
@@ -2537,7 +2575,7 @@ private fun PreloadOnlyActions(
         } else {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             Text(
-                "${formatBytes(state.preloadBytes)} en tampon / prêt à ${formatBytes(readyBytes)} / avance cible ${formatPreloadTarget(aheadBytes)}",
+                "${formatBytes(state.preloadBytes)} préchargés / prêt à ${formatBytes(readyBytes)} / avance cible ${formatPreloadTarget(aheadBytes)}",
                 color = Color.White
             )
         }
@@ -2604,7 +2642,7 @@ private fun SettingsScreen(
             subtitle = "Choisis le comportement adapté à ton Wi-Fi, VPN ou débit."
         ) {
             Text(
-                "OK sur une carte applique immédiatement le buffer, le format live et la taille du tampon.",
+                "OK sur une carte applique immédiatement le buffer, le format live et la taille du préchargement.",
                 color = Color(0xFFC9C6E4),
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -2634,7 +2672,7 @@ private fun SettingsScreen(
                 OutlinedButton(onClick = onCycleBuffer) { Text("Changer") }
             }
             Text(
-                "Tampon: lecture après ${formatBytes(state.networkProfile.preloadReadyBytes)}, avance profil ${formatPreloadTarget(state.networkProfile.preloadAheadBytes)}",
+                "Préchargement: lecture après ${formatBytes(state.networkProfile.preloadReadyBytes)}, avance profil ${formatPreloadTarget(state.networkProfile.preloadAheadBytes)}",
                 color = Color(0xFFC9C6E4),
                 style = MaterialTheme.typography.bodySmall
             )
@@ -2751,7 +2789,7 @@ private fun NetworkProfileCard(
                 maxLines = 1
             )
             Text(
-                "Tampon ${formatBytes(profile.preloadReadyBytes)}",
+                "Précharge ${formatBytes(profile.preloadReadyBytes)}",
                 color = Color(0xFFB9C0E4),
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1
@@ -2898,10 +2936,10 @@ private fun StoragePanel(state: MainUiState, onClearImageCache: () -> Unit) {
             )
             StorageMetricRow("Téléchargements", state.storageDownloadBytes)
             StorageMetricRow("Cache affiches", state.storagePosterCacheBytes)
-            StorageMetricRow("Tampon temporaire", state.storageTamponCacheBytes)
+            StorageMetricRow("Préchargement temporaire", state.storageTamponCacheBytes)
             if (available < 768L * 1024L * 1024L) {
                 Text(
-                    "Stockage bas: téléchargement et tampon peuvent être bloqués.",
+                    "Stockage bas: téléchargement et préchargement peuvent être bloqués.",
                     color = Color(0xFFFFB4AB),
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Bold

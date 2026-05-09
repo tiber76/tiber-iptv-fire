@@ -1,15 +1,12 @@
 package com.tiberiptv.fire
 
 import android.app.Application
-import android.app.Activity
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.StatFs
 import android.os.SystemClock
-import android.speech.RecognizerIntent
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
@@ -18,7 +15,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -31,6 +27,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -51,6 +50,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -59,7 +59,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -73,6 +72,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -87,6 +87,9 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -118,22 +121,9 @@ import kotlin.math.max
 import kotlin.math.min
 
 class MainActivity : ComponentActivity() {
-    private val voiceSearchLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode != Activity.RESULT_OK) {
-            return@registerForActivityResult
-        }
-        val spokenText = result.data
-            ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-            ?.firstOrNull()
-            ?.trim()
-            .orEmpty()
-        if (spokenText.isNotEmpty()) {
-            ViewModelHolder.current?.setQuery(spokenText)
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        PreloadStreamServer.cleanupCache(this)
         enterImmersiveMode()
         setContent {
             TiberTheme {
@@ -155,8 +145,8 @@ class MainActivity : ComponentActivity() {
                     onToggleFilter4k = viewModel::toggleFilter4k,
                     onToggleFilterHighRating = viewModel::toggleFilterHighRating,
                     onToggleFilterRecentYear = viewModel::toggleFilterRecentYear,
+                    onClearCatalogFilters = viewModel::clearCatalogFilters,
                     onCatalogSort = viewModel::setCatalogSort,
-                    onVoiceSearch = ::startVoiceSearch,
                     onOpenItem = viewModel::openItem,
                     onBackToCatalog = viewModel::closeDetail,
                     onToggleFavorite = viewModel::toggleFavorite,
@@ -170,6 +160,8 @@ class MainActivity : ComponentActivity() {
                     onCancelDownload = viewModel::cancelDownload,
                     onDeleteDownload = viewModel::deleteDownload,
                     onClearImageCache = viewModel::clearImageCache,
+                    onClearPreloadCache = viewModel::clearPreloadCache,
+                    onClearCatalogCache = viewModel::clearCatalogCache,
                     onHome = { finish() },
                     onSettings = viewModel::openSettings,
                     onCloseSettings = { viewModel.loadMode(Mode.MOVIES, false) },
@@ -197,7 +189,10 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         enterImmersiveMode()
-        ViewModelHolder.current?.cleanupBufferedPlaybackIfIdle()
+        ViewModelHolder.current?.let { viewModel ->
+            viewModel.cleanupBufferedPlaybackIfIdle()
+            viewModel.refreshSelectedPlaybackStateSoon()
+        }
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -229,30 +224,16 @@ class MainActivity : ComponentActivity() {
             Toast.makeText(this, "Bande-annonce indisponible.", Toast.LENGTH_SHORT).show()
             return
         }
-        if (!RemoteActionGuard.tryAcquire("bande-annonce")) {
-            Toast.makeText(this, "Bande-annonce bloquée: session distante active ${RemoteActionGuard.activeLabel()}.", Toast.LENGTH_LONG).show()
+        if (!RemoteActionGuard.tryAcquire(RemoteLabels.TRAILER)) {
+            Toast.makeText(this, UserFacingMessages.remoteBusy("Bande-annonce"), Toast.LENGTH_LONG).show()
             return
         }
         startActivity(
             Intent(this, TrailerActivity::class.java)
                 .putExtra(TrailerActivity.EXTRA_TITLE, title)
                 .putExtra(TrailerActivity.EXTRA_TRAILER, trailer)
-                .putExtra(TrailerActivity.EXTRA_REMOTE_GUARD_LABEL, "bande-annonce")
+                .putExtra(TrailerActivity.EXTRA_REMOTE_GUARD_LABEL, RemoteLabels.TRAILER)
         )
-    }
-
-    private fun startVoiceSearch() {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Rechercher un film, une série ou une chaîne")
-            .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-
-        try {
-            voiceSearchLauncher.launch(intent)
-        } catch (_: ActivityNotFoundException) {
-            Toast.makeText(this, "Recherche vocale indisponible sur cet appareil.", Toast.LENGTH_LONG).show()
-        }
     }
 
     @Suppress("DEPRECATION")
@@ -280,6 +261,13 @@ class MainActivity : ComponentActivity() {
 
 private val TvFocusOutline = Color(0xFF8FA2FF)
 private val TvFocusSurface = Color(0xFF242842)
+private const val TOP_RATED_MONTH_SECONDS = 31L * 24L * 60L * 60L
+private const val TOP_RATED_SIX_MONTHS_SECONDS = 183L * 24L * 60L * 60L
+private const val BUFFER_LONG_AHEAD_BYTES = 1536L * 1024L * 1024L
+private const val BUFFER_COMPLETE_AHEAD_BYTES = Long.MAX_VALUE / 4L
+private const val DETAIL_PRELOAD_READY_BYTES = 250L * 1024L * 1024L
+private val RatingFractionRegex = Regex("""(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)""")
+private val RatingNumberRegex = Regex("""\d+(?:\.\d+)?""")
 
 private object ViewModelHolder {
     var current: MainViewModel? = null
@@ -290,13 +278,19 @@ enum class Mode(val label: String) {
     MOVIES("Films"),
     SERIES("Séries"),
     FAVORITES("Favoris"),
-    DOWNLOADS("Local")
+    DOWNLOADS("Téléchargés")
 }
 
 enum class CatalogSort(val label: String) {
     RECENT("Ajout récent"),
     RATING("Note"),
     ALPHA("A-Z")
+}
+
+enum class PreloadMode(val label: String) {
+    NORMAL("Précharger"),
+    LONG("Précharger plus"),
+    COMPLETE("Précharger complet")
 }
 
 enum class NetworkProfile(
@@ -312,23 +306,23 @@ enum class NetworkProfile(
         6_000,
         "ts",
         160L * 1024L * 1024L,
-        384L * 1024L * 1024L,
+        512L * 1024L * 1024L,
         "Réglage équilibré pour une connexion stable."
     ),
     VPN_UNSTABLE(
-        "VPN / instable",
+        "VPN / Connexion instable",
         12_000,
         "m3u8",
         250L * 1024L * 1024L,
-        512L * 1024L * 1024L,
-        "Tampon long avant lecture et live M3U8 pour les routes réseau variables."
+        BUFFER_LONG_AHEAD_BYTES,
+        "Préchargement long avant lecture et live M3U8 pour les routes réseau variables."
     ),
     SLOW(
         "Connexion lente",
         20_000,
         "m3u8",
         120L * 1024L * 1024L,
-        256L * 1024L * 1024L,
+        BUFFER_LONG_AHEAD_BYTES,
         "Démarrage plus patient avec buffer lecteur élevé."
     );
 
@@ -365,6 +359,9 @@ data class MainUiState(
     val preloadingItem: XtreamModels.StreamItem? = null,
     val preloadBytes: Long = 0L,
     val preloadTotal: Long = -1L,
+    val preloadReadyBytes: Long = 0L,
+    val preloadAheadBytes: Long = 0L,
+    val preloadModeLabel: String = "",
     val preloadCancelling: Boolean = false,
     val preloadConverting: Boolean = false,
     val settingsVisible: Boolean = false,
@@ -402,6 +399,22 @@ data class PlaybackRequest(
     val remoteGuardLabel: String,
     val bufferedPlayback: Boolean = false
 )
+
+private enum class PremiumRowKind {
+    HISTORY,
+    FAVORITES,
+    FOUR_K,
+    TOP_RATED,
+    RECENT
+}
+
+private fun premiumRowPrefix(kind: PremiumRowKind): String = "__premium_${kind.name}__"
+
+private fun premiumRowKind(title: String): PremiumRowKind? =
+    PremiumRowKind.entries.firstOrNull { kind -> title.startsWith(premiumRowPrefix(kind)) }
+
+private fun displayRowTitle(title: String): String =
+    premiumRowKind(title)?.let { kind -> title.removePrefix(premiumRowPrefix(kind)) } ?: title
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
@@ -498,7 +511,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     settingsVisible = false,
                     loading = false,
                     error = null,
-                    status = "Fichiers locaux"
+                    status = "Mes téléchargements"
                 )
             }
             return
@@ -509,7 +522,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update {
                 it.copy(
                     mode = mode,
-                    rows = withHistoryRow(cached),
+                    rows = withHistoryRow(mode, cached),
                     selectedItem = null,
                     selectedQualityHint = "",
                     selectedSizeBytes = -1L,
@@ -536,8 +549,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     mode = mode,
                     settingsVisible = false,
                     loading = false,
-                    error = "Session distante active: ${RemoteActionGuard.activeLabel()}",
-                    status = "Synchronisation bloquée"
+                    error = UserFacingMessages.remoteBusy("Rechargement du catalogue"),
+                    status = "Action déjà en cours"
                 )
             }
             return
@@ -565,7 +578,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 stateStore.saveRows(mode.name, rows)
                 _uiState.update {
                     it.copy(
-                        rows = withHistoryRow(rows),
+                        rows = withHistoryRow(mode, rows),
                         loading = false,
                         selectedQualityHint = "",
                         selectedSizeBytes = -1L,
@@ -602,6 +615,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleFilterRecentYear() {
         _uiState.update { it.copy(filterRecentYear = !it.filterRecentYear) }
+    }
+
+    fun clearCatalogFilters() {
+        _uiState.update {
+            it.copy(
+                filter4k = false,
+                filterHighRating = false,
+                filterRecentYear = false,
+                catalogSort = CatalogSort.RECENT
+            )
+        }
     }
 
     fun setCatalogSort(sort: CatalogSort) {
@@ -702,7 +726,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     preloadTotal = -1L,
                     preloadCancelling = false,
                     preloadConverting = false,
-                    status = "Lecture depuis le tampon"
+                    status = "Lecture depuis le préchargement"
                 )
             }
             return PlaybackRequest(preloadSession.localUrl(), "", RemoteLabels.BUFFER, bufferedPlayback = true)
@@ -720,12 +744,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     selectedDownloaded = false,
                     selectedSizeBytes = stateStore.cachedContentLength(item),
                     rows = if (it.mode == Mode.DOWNLOADS) downloadRows() else it.rows,
-                    status = "Fichier local absent, reprise en streaming"
+                    status = "Téléchargement absent, reprise en streaming"
                 )
             }
         }
         if (!RemoteActionGuard.tryAcquire(RemoteLabels.PLAYBACK)) {
-            _uiState.update { it.copy(error = "Lecture bloquée: session distante active ${RemoteActionGuard.activeLabel()}.") }
+            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Lecture")) }
             return null
         }
         stateStore.addHistory(item)
@@ -739,33 +763,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return PlaybackRequest(url, fallback, RemoteLabels.PLAYBACK)
     }
 
-    fun startPreload(item: XtreamModels.StreamItem) {
+    fun startPreload(item: XtreamModels.StreamItem, preloadMode: PreloadMode = PreloadMode.NORMAL) {
         val api = api ?: return
         cleanupBufferedPlaybackIfIdle()
         if (item.type == XtreamModels.StreamItem.TYPE_SERIES) {
-            _uiState.update { it.copy(error = "Choisis un épisode avant de tamponner.") }
+            _uiState.update { it.copy(error = "Choisis un épisode avant de précharger.") }
             return
         }
         val profile = stateStore.networkProfile()
         val storage = storageInfo()
-        if (storage.availableBytes in 0 until profile.preloadReadyBytes + StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES) {
+        val preloadReadyBytes = profile.preloadReadyBytes
+        val preloadAheadBytes = preloadAheadBytesFor(profile, preloadMode, storage.availableBytes)
+        if (preloadAheadBytes < preloadReadyBytes ||
+            storage.availableBytes in 0 until preloadReadyBytes + StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES
+        ) {
             _uiState.update {
                 it.withStorage(storage).copy(
-                    error = "Stockage trop bas pour tamponner: ${formatBytes(storage.availableBytes)} libres."
+                    error = "Stockage trop bas pour précharger: ${formatBytes(storage.availableBytes)} libres."
                 )
             }
             return
         }
         if (localFile(item).isFile) {
-            _uiState.update { it.copy(status = "Déjà disponible en local") }
+            _uiState.update { it.copy(status = "Déjà téléchargé") }
             return
         }
         if (preloadJob?.isActive == true || PreloadStreamServer.isActive()) {
-            _uiState.update { it.copy(error = "Tampon déjà en cours.") }
+            _uiState.update { it.copy(error = "Préchargement déjà en cours.") }
             return
         }
         if (!RemoteActionGuard.tryAcquire(RemoteLabels.BUFFER)) {
-            _uiState.update { it.copy(error = "Tampon bloqué: session distante active ${RemoteActionGuard.activeLabel()}.") }
+            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Préchargement")) }
             return
         }
 
@@ -775,11 +803,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 preloadingItem = item,
                 preloadBytes = 0L,
                 preloadTotal = -1L,
+                preloadReadyBytes = preloadReadyBytes,
+                preloadAheadBytes = preloadAheadBytes,
+                preloadModeLabel = preloadMode.label,
                 preloadCancelling = false,
                 preloadConverting = false,
                 selectedItem = item,
                 error = null,
-                status = "Tampon ${item.title}"
+                status = "${preloadMode.label} ${item.title}"
             )
         }
         preloadJob = viewModelScope.launch {
@@ -789,7 +820,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val startedAt = System.currentTimeMillis()
                 val url = api.streamUrl(item, if (item.type == XtreamModels.StreamItem.TYPE_LIVE) stateStore.liveFormat() else null)
                 session = withContext(Dispatchers.IO) {
-                    PreloadStreamServer.start(appContext, url, profile.preloadAheadBytes)
+                    PreloadStreamServer.start(appContext, url, preloadAheadBytes)
                 }
                 activePreloadSession = session
                 activePreloadItem = item
@@ -804,27 +835,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val speedMbps = downloaded * 8.0 / elapsedMs / 1000.0
                         val slowWarning = elapsedMs > 15_000L && downloaded < 8L * 1024L * 1024L
                         val status = if (slowWarning) {
-                            "Tampon lent (${String.format(Locale.US, "%.1f", speedMbps)} Mbps)"
+                            "Préchargement lent (${String.format(Locale.US, "%.1f", speedMbps)} Mbps)"
                         } else {
-                            "Tampon ${formatBytes(downloaded)}"
+                            "Préchargé ${formatBytes(downloaded)}"
                         }
                         it.copy(
                             preloadingItem = item,
                             preloadBytes = downloaded,
                             preloadTotal = total,
+                            preloadReadyBytes = preloadReadyBytes,
+                            preloadAheadBytes = preloadAheadBytes,
+                            preloadModeLabel = preloadMode.label,
                             status = status
                         )
                     }
-                    if (downloaded >= profile.preloadReadyBytes || (downloaded > 0L && !session.isActive())) {
+                    if (downloaded >= preloadReadyBytes || (downloaded > 0L && !session.isActive())) {
                         break
                     }
                     delay(500L)
                 }
                 if (preloadCancelRequested) {
-                    throw InterruptedException("Tampon annulé")
+                    throw InterruptedException("Préchargement annulé")
                 }
                 if (session.downloadedBytes() <= 0L) {
-                    throw IllegalStateException("Tampon trop lent.")
+                    throw IllegalStateException("Préchargement trop lent.")
                 }
                 ready = true
                 _uiState.update {
@@ -832,9 +866,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         preloadingItem = item,
                         preloadBytes = session.downloadedBytes(),
                         preloadTotal = session.totalBytes(),
+                        preloadReadyBytes = preloadReadyBytes,
+                        preloadAheadBytes = preloadAheadBytes,
+                        preloadModeLabel = preloadMode.label,
                         preloadCancelling = false,
                         preloadConverting = false,
-                        status = "Tampon prêt"
+                        status = "Préchargement prêt"
                     )
                 }
             } catch (exception: Exception) {
@@ -853,8 +890,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             preloadTotal = -1L,
                             preloadCancelling = false,
                             preloadConverting = false,
-                            error = if (preloadCancelRequested) null else "Tampon impossible: ${exception.message ?: exception.javaClass.simpleName}",
-                            status = if (preloadCancelRequested) "Tampon annulé" else "Erreur tampon"
+                            error = if (preloadCancelRequested) null else "Préchargement impossible: ${exception.message ?: exception.javaClass.simpleName}",
+                            status = if (preloadCancelRequested) "Préchargement annulé" else "Erreur préchargement"
                         )
                     }
                 }
@@ -870,11 +907,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun convertPreloadToDownload(item: XtreamModels.StreamItem) {
         val session = activePreloadSession
         if (session == null || activePreloadItem?.key() != item.key()) {
-            _uiState.update { it.copy(error = "Aucun tampon prêt pour ce contenu.") }
+            _uiState.update { it.copy(error = "Aucun préchargement prêt pour ce contenu.") }
             return
         }
         if (RemoteActionGuard.activeLabel() != RemoteLabels.BUFFER) {
-            _uiState.update { it.copy(error = "Conversion bloquée: verrou tampon absent.") }
+            _uiState.update { it.copy(error = UserFacingMessages.remoteGuardUnavailable("Conversion du préchargement")) }
             return
         }
         if (downloadJob?.isActive == true || preloadJob?.isActive == true) {
@@ -904,7 +941,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 preloadConverting = true,
                 selectedItem = item,
                 error = null,
-                status = "Conversion du tampon en téléchargement"
+                status = "Conversion du préchargement en téléchargement"
             )
         }
         preloadJob = viewModelScope.launch {
@@ -952,7 +989,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         preloadConverting = false,
                         selectedSizeBytes = target.length(),
                         rows = if (it.mode == Mode.DOWNLOADS) downloadRows() else it.rows,
-                        status = "Téléchargement terminé depuis le tampon"
+                        status = "Téléchargement terminé depuis le préchargement"
                     )
                 }
             } catch (exception: Exception) {
@@ -987,6 +1024,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun refreshSelectedPlaybackStateSoon() {
+        refreshSelectedPlaybackState()
+        viewModelScope.launch {
+            delay(300L)
+            refreshSelectedPlaybackState()
+        }
+    }
+
+    private fun refreshSelectedPlaybackState() {
+        val item = _uiState.value.selectedItem ?: return
+        val local = localFile(item)
+        val resumePosition = stateStore.resumePosition(item)
+        _uiState.update { state ->
+            if (state.selectedItem?.key() != item.key()) {
+                state
+            } else {
+                state.copy(
+                    selectedResumePositionMs = resumePosition,
+                    selectedDownloaded = local.isFile,
+                    selectedSizeBytes = if (local.isFile) local.length() else state.selectedSizeBytes
+                )
+            }
+        }
+    }
+
+    private fun preloadAheadBytesFor(
+        profile: NetworkProfile,
+        preloadMode: PreloadMode,
+        availableBytes: Long
+    ): Long {
+        val requested = when (preloadMode) {
+            PreloadMode.NORMAL -> profile.preloadAheadBytes
+            PreloadMode.LONG -> max(profile.preloadAheadBytes, BUFFER_LONG_AHEAD_BYTES)
+            PreloadMode.COMPLETE -> BUFFER_COMPLETE_AHEAD_BYTES
+        }
+        val storageBound = if (availableBytes > StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES) {
+            availableBytes - StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES
+        } else {
+            0L
+        }
+        return min(requested, storageBound)
+    }
+
     fun startDownload(item: XtreamModels.StreamItem) {
         if (downloadJob?.isActive == true) {
             _uiState.update { it.copy(error = "Téléchargement déjà en cours.") }
@@ -1003,7 +1083,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (!RemoteActionGuard.tryAcquire(RemoteLabels.DOWNLOAD)) {
-            _uiState.update { it.copy(error = "Téléchargement bloqué: session distante active ${RemoteActionGuard.activeLabel()}.") }
+            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Téléchargement")) }
             return
         }
         downloadCancelRequested = false
@@ -1085,7 +1165,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancelPreload() {
         preloadCancelRequested = true
-        _uiState.update { it.copy(preloadCancelling = true, status = "Annulation du tampon...") }
+        _uiState.update { it.copy(preloadCancelling = true, status = "Annulation du préchargement...") }
         activePreloadSession?.stop()
         PreloadStreamServer.stop()
         RemoteActionGuard.release(RemoteLabels.BUFFER)
@@ -1100,7 +1180,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 preloadTotal = -1L,
                 preloadCancelling = false,
                 preloadConverting = false,
-                status = "Tampon annulé"
+                status = "Préchargement annulé"
             )
         }
     }
@@ -1135,6 +1215,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val storage = storageInfo()
         _uiState.update {
             it.withStorage(storage).copy(status = "Cache images nettoyé", error = null)
+        }
+    }
+
+    fun clearPreloadCache() {
+        if (_uiState.value.preloadingItem != null || PreloadStreamServer.isActive()) {
+            _uiState.update {
+                it.copy(error = "Préchargement actif: annule-le avant de nettoyer le cache temporaire.")
+            }
+            return
+        }
+        PreloadStreamServer.cleanupCache(appContext)
+        val storage = storageInfo()
+        _uiState.update {
+            it.withStorage(storage).copy(status = "Cache préchargement nettoyé", error = null)
+        }
+    }
+
+    fun clearCatalogCache() {
+        stateStore.clearCatalogCaches()
+        _uiState.update {
+            it.copy(status = "Cache catalogue vidé", error = null)
         }
     }
 
@@ -1178,8 +1279,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun loadMovieDetail(item: XtreamModels.StreamItem) {
         val api = api ?: return
-        if (!RemoteActionGuard.tryAcquire("details film")) {
-            _uiState.update { it.copy(error = "Détails bloqués: session distante active ${RemoteActionGuard.activeLabel()}.") }
+        if (!RemoteActionGuard.tryAcquire(RemoteLabels.MOVIE_DETAIL)) {
+            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Fiche film")) }
             return
         }
         viewModelScope.launch {
@@ -1196,15 +1297,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (exception: Exception) {
                 _uiState.update { it.copy(error = "Détails indisponibles: ${exception.message}") }
             } finally {
-                RemoteActionGuard.release("details film")
+                RemoteActionGuard.release(RemoteLabels.MOVIE_DETAIL)
             }
         }
     }
 
     private fun loadSeries(item: XtreamModels.StreamItem) {
         val api = api ?: return
-        if (!RemoteActionGuard.tryAcquire("details serie")) {
-            _uiState.update { it.copy(error = "Série bloquée: session distante active ${RemoteActionGuard.activeLabel()}.") }
+        if (!RemoteActionGuard.tryAcquire(RemoteLabels.SERIES_DETAIL)) {
+            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Fiche série")) }
             return
         }
         viewModelScope.launch {
@@ -1214,7 +1315,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (exception: Exception) {
                 _uiState.update { it.copy(error = "Série indisponible: ${exception.message}") }
             } finally {
-                RemoteActionGuard.release("details serie")
+                RemoteActionGuard.release(RemoteLabels.SERIES_DETAIL)
             }
         }
     }
@@ -1255,9 +1356,83 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return if (items.isEmpty()) emptyList() else listOf(XtreamModels.ContentRow("Téléchargés", items))
     }
 
-    private fun withHistoryRow(rows: List<XtreamModels.ContentRow>): List<XtreamModels.ContentRow> {
-        val history = stateStore.history(20)
-        return if (history.isEmpty()) rows else listOf(XtreamModels.ContentRow("Reprendre", history)) + rows
+    private fun withHistoryRow(mode: Mode, rows: List<XtreamModels.ContentRow>): List<XtreamModels.ContentRow> {
+        val premiumRows = premiumRows(mode, rows)
+        return if (premiumRows.isEmpty()) rows else premiumRows + rows
+    }
+
+    private fun premiumRows(mode: Mode, rows: List<XtreamModels.ContentRow>): List<XtreamModels.ContentRow> {
+        val allItems = rows
+            .flatMap { row -> row.items.map { item -> row.title to item } }
+            .distinctBy { (_, item) -> item.key() }
+        val history = historyForMode(mode)
+        val favorites = stateStore.favorites()
+            .filter { favorite -> allItems.any { (_, item) -> item.key() == favorite.key() } }
+        val fourK = allItems
+            .filter { (rowTitle, item) -> isUltraHd(item, rowTitle) }
+            .map { (_, item) -> item }
+            .take(20)
+        val nowSeconds = System.currentTimeMillis() / 1_000L
+        val topRatedMonth = topRatedSince(allItems, nowSeconds - TOP_RATED_MONTH_SECONDS)
+        val topRatedSixMonths = topRatedSince(allItems, nowSeconds - TOP_RATED_SIX_MONTHS_SECONDS)
+        val recent = allItems
+            .map { (_, item) -> item }
+            .filter { item -> item.addedTimestamp.toLongOrNull() != null }
+            .sortedByDescending { item -> item.addedTimestamp.toLongOrNull() ?: 0L }
+            .take(20)
+
+        return buildList {
+            addPremiumRow(PremiumRowKind.RECENT, "Ajoutés récemment", recent)
+            addPremiumRow(PremiumRowKind.HISTORY, "Continuer à regarder", history)
+            addPremiumRow(PremiumRowKind.FAVORITES, "Mes favoris", favorites)
+            addPremiumRow(PremiumRowKind.FOUR_K, "Sélection 4K", fourK)
+            addPremiumRow(PremiumRowKind.TOP_RATED, "Top notes du mois", topRatedMonth)
+            addPremiumRow(PremiumRowKind.TOP_RATED, "Top notes 6 derniers mois", topRatedSixMonths)
+        }
+    }
+
+    private fun topRatedSince(
+        allItems: List<Pair<String, XtreamModels.StreamItem>>,
+        minAddedEpochSeconds: Long
+    ): List<XtreamModels.StreamItem> =
+        allItems
+            .map { (_, item) -> item }
+            .filter { item ->
+                val added = addedEpochSeconds(item)
+                added >= minAddedEpochSeconds && numericRating(item.rating) >= 7f
+            }
+            .sortedWith(
+                compareByDescending<XtreamModels.StreamItem> { numericRating(it.rating) }
+                    .thenByDescending { addedEpochSeconds(it) }
+            )
+            .take(20)
+
+    private fun addedEpochSeconds(item: XtreamModels.StreamItem): Long {
+        val raw = item.addedTimestamp.toLongOrNull() ?: return 0L
+        return if (raw > 9_999_999_999L) raw / 1_000L else raw
+    }
+
+    private fun historyForMode(mode: Mode): List<XtreamModels.StreamItem> =
+        when (mode) {
+            Mode.MOVIES -> stateStore.history(setOf(XtreamModels.StreamItem.TYPE_MOVIE), 20)
+            Mode.SERIES -> stateStore.history(
+                setOf(
+                    XtreamModels.StreamItem.TYPE_SERIES,
+                    XtreamModels.StreamItem.TYPE_EPISODE
+                ),
+                20
+            )
+            Mode.LIVE, Mode.FAVORITES, Mode.DOWNLOADS -> emptyList()
+        }
+
+    private fun MutableList<XtreamModels.ContentRow>.addPremiumRow(
+        kind: PremiumRowKind,
+        title: String,
+        items: List<XtreamModels.StreamItem>
+    ) {
+        if (items.isNotEmpty()) {
+            add(XtreamModels.ContentRow("${premiumRowPrefix(kind)}$title", items))
+        }
     }
 
     private fun localFile(item: XtreamModels.StreamItem): File {
@@ -1391,14 +1566,14 @@ private fun MainRoute(
     onToggleFilter4k: () -> Unit,
     onToggleFilterHighRating: () -> Unit,
     onToggleFilterRecentYear: () -> Unit,
+    onClearCatalogFilters: () -> Unit,
     onCatalogSort: (CatalogSort) -> Unit,
-    onVoiceSearch: () -> Unit,
     onOpenItem: (XtreamModels.StreamItem) -> Unit,
     onBackToCatalog: () -> Unit,
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit,
     onPlay: (XtreamModels.StreamItem) -> Unit,
     onPlayFromStart: (XtreamModels.StreamItem) -> Unit,
-    onPreload: (XtreamModels.StreamItem) -> Unit,
+    onPreload: (XtreamModels.StreamItem, PreloadMode) -> Unit,
     onCancelPreload: () -> Unit,
     onConvertPreload: (XtreamModels.StreamItem) -> Unit,
     onTrailer: (String, String) -> Unit,
@@ -1406,6 +1581,8 @@ private fun MainRoute(
     onCancelDownload: () -> Unit,
     onDeleteDownload: (XtreamModels.StreamItem) -> Unit,
     onClearImageCache: () -> Unit,
+    onClearPreloadCache: () -> Unit,
+    onClearCatalogCache: () -> Unit,
     onHome: () -> Unit,
     onSettings: () -> Unit,
     onCloseSettings: () -> Unit,
@@ -1416,6 +1593,9 @@ private fun MainRoute(
     onLogout: () -> Unit
 ) {
     val catalogListState = rememberLazyListState()
+    val rowListStates = remember { mutableStateMapOf<String, LazyListState>() }
+    var restoreItemKey by remember { mutableStateOf<String?>(null) }
+    var restoreRowTitle by remember { mutableStateOf<String?>(null) }
     var catalogInitialFocusRequested by remember { mutableStateOf(false) }
 
     BackHandler(enabled = state.settingsVisible || state.selectedItem != null) {
@@ -1443,6 +1623,10 @@ private fun MainRoute(
                     onNetworkProfile = onNetworkProfile,
                     onCycleBuffer = onCycleBuffer,
                     onLiveFormat = onLiveFormat,
+                    onClearCatalogFilters = onClearCatalogFilters,
+                    onClearImageCache = onClearImageCache,
+                    onClearPreloadCache = onClearPreloadCache,
+                    onClearCatalogCache = onClearCatalogCache,
                     onLogout = onLogout
                 )
             } else if (state.selectedItem != null) {
@@ -1472,13 +1656,24 @@ private fun MainRoute(
                     onToggleFilter4k = onToggleFilter4k,
                     onToggleFilterHighRating = onToggleFilterHighRating,
                     onToggleFilterRecentYear = onToggleFilterRecentYear,
+                    onClearCatalogFilters = onClearCatalogFilters,
                     onCatalogSort = onCatalogSort,
-                    onVoiceSearch = onVoiceSearch,
-                    onOpenItem = onOpenItem,
+                    onOpenItem = { item, rowTitle ->
+                        restoreItemKey = item.key()
+                        restoreRowTitle = rowTitle
+                        onOpenItem(item)
+                    },
                     onToggleFavorite = onToggleFavorite,
                     onClearImageCache = onClearImageCache,
                     onHome = onHome,
                     onSettings = onSettings,
+                    rowListStates = rowListStates,
+                    restoreItemKey = restoreItemKey,
+                    restoreRowTitle = restoreRowTitle,
+                    onRestoreConsumed = {
+                        restoreItemKey = null
+                        restoreRowTitle = null
+                    },
                     listState = catalogListState,
                     requestInitialFocus = !catalogInitialFocusRequested,
                     onInitialFocusRequested = { catalogInitialFocusRequested = true }
@@ -1497,13 +1692,17 @@ private fun CatalogScreen(
     onToggleFilter4k: () -> Unit,
     onToggleFilterHighRating: () -> Unit,
     onToggleFilterRecentYear: () -> Unit,
+    onClearCatalogFilters: () -> Unit,
     onCatalogSort: (CatalogSort) -> Unit,
-    onVoiceSearch: () -> Unit,
-    onOpenItem: (XtreamModels.StreamItem) -> Unit,
+    onOpenItem: (XtreamModels.StreamItem, String) -> Unit,
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit,
     onClearImageCache: () -> Unit,
     onHome: () -> Unit,
     onSettings: () -> Unit,
+    rowListStates: MutableMap<String, LazyListState>,
+    restoreItemKey: String?,
+    restoreRowTitle: String?,
+    onRestoreConsumed: () -> Unit,
     listState: LazyListState,
     requestInitialFocus: Boolean,
     onInitialFocusRequested: () -> Unit
@@ -1518,44 +1717,129 @@ private fun CatalogScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 18.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
         var searchDialogVisible by remember { mutableStateOf(false) }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = state.mode.label,
-                color = Color.White,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
-            )
-            CatalogHeaderButton(
-                label = "Profil: ${state.networkProfile.label}",
-                contentColor = networkProfileAccent(state.networkProfile),
-                onClick = onSettings,
-                modifier = Modifier.width(188.dp)
-            )
-            CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(94.dp), onClick = onHome)
-            CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(106.dp), onClick = onSettings)
-            CatalogHeaderButton(label = "Actualiser", modifier = Modifier.width(114.dp), enabled = !state.loading, onClick = onRefresh)
-        }
-        HeaderDownloadStatus(state)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Mode.entries.forEachIndexed { index, mode ->
-                TvChip(
-                    label = mode.label,
-                    selected = state.mode == mode,
-                    modifier = if (index == 1) Modifier.focusRequester(firstFocus) else Modifier,
-                    onClick = { onMode(mode) }
+        var filtersExpanded by remember { mutableStateOf(false) }
+        val activeFilterCount = activeCatalogFilterCount(state)
+        val hasCustomSort = state.catalogSort != CatalogSort.RECENT
+        val hasCatalogControls = activeFilterCount > 0 || hasCustomSort
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xB0161830))
+                .border(1.dp, Color(0xFF303656), RoundedCornerShape(14.dp))
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = state.mode.label,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    state.status,
+                    color = Color(0xFFC9C6E4),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 180.dp)
+                )
+                CatalogHeaderButton(
+                    label = "Profil: ${state.networkProfile.label}",
+                    contentColor = networkProfileAccent(state.networkProfile),
+                    onClick = onSettings,
+                    modifier = Modifier.width(188.dp)
+                )
+                CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(74.dp), onClick = onHome)
+                CatalogHeaderButton(label = "Recharger", modifier = Modifier.width(100.dp), enabled = !state.loading, onClick = onRefresh)
+                CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(82.dp), onClick = onSettings)
+            }
+            HeaderDownloadStatus(state)
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                contentPadding = PaddingValues(horizontal = 3.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                itemsIndexed(Mode.entries, key = { _, mode -> mode.name }) { index, mode ->
+                    TvChip(
+                        label = mode.label,
+                        selected = state.mode == mode,
+                        modifier = if (index == 1) Modifier.focusRequester(firstFocus) else Modifier,
+                        onClick = { onMode(mode) }
+                    )
+                }
+                item("catalog-tools-separator") {
+                    CatalogControlSeparator()
+                }
+                item("search") {
+                    TvSearchButton(
+                        query = state.query,
+                        modifier = Modifier.width(168.dp),
+                        onClick = { searchDialogVisible = true }
+                    )
+                }
+                item("filters") {
+                    TvChip(
+                        selected = filtersExpanded || activeFilterCount > 0,
+                        onClick = { filtersExpanded = !filtersExpanded },
+                        label = if (activeFilterCount > 0) "Filtres $activeFilterCount" else "Filtres"
+                    )
+                }
+                item("sort") {
+                    TvChip(
+                        selected = hasCustomSort,
+                        onClick = { onCatalogSort(state.catalogSort.next()) },
+                        label = "Tri ${state.catalogSort.label}"
+                    )
+                }
+            }
+            if (!filtersExpanded && hasCatalogControls) {
+                ActiveCatalogControlSummary(
+                    state = state,
+                    activeFilterCount = activeFilterCount,
+                    onClear = onClearCatalogFilters
                 )
             }
-            TvSearchButton(
-                query = state.query,
-                modifier = Modifier.width(350.dp),
-                onClick = { searchDialogVisible = true }
-            )
-            CatalogHeaderButton(label = "Micro", modifier = Modifier.width(92.dp), onClick = onVoiceSearch)
+            if (filtersExpanded) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    contentPadding = PaddingValues(horizontal = 3.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    item {
+                        TvChip(selected = state.filter4k, onClick = onToggleFilter4k, label = "4K")
+                    }
+                    item {
+                        TvChip(selected = state.filterHighRating, onClick = onToggleFilterHighRating, label = "Note 7+")
+                    }
+                    item {
+                        TvChip(selected = state.filterRecentYear, onClick = onToggleFilterRecentYear, label = "Année récente")
+                    }
+                    items(CatalogSort.entries, key = { sort -> sort.name }) { sort ->
+                        TvChip(
+                            selected = state.catalogSort == sort,
+                            onClick = { onCatalogSort(sort) },
+                            label = "Tri ${sort.label}"
+                        )
+                    }
+                    if (hasCatalogControls) {
+                        item {
+                            TvChip(
+                                selected = false,
+                                onClick = onClearCatalogFilters,
+                                label = "Réinitialiser"
+                            )
+                        }
+                    }
+                }
+            }
         }
         if (searchDialogVisible) {
             SearchDialog(
@@ -1564,82 +1848,96 @@ private fun CatalogScreen(
                 onDismiss = { searchDialogVisible = false }
             )
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                item {
-                    TvChip(selected = state.filter4k, onClick = onToggleFilter4k, label = "4K")
-                }
-                item {
-                    TvChip(selected = state.filterHighRating, onClick = onToggleFilterHighRating, label = "Note 7+")
-                }
-                item {
-                    TvChip(selected = state.filterRecentYear, onClick = onToggleFilterRecentYear, label = "Année récente")
-                }
-                items(CatalogSort.entries, key = { sort -> sort.name }) { sort ->
-                    TvChip(
-                        selected = state.catalogSort == sort,
-                        onClick = { onCatalogSort(sort) },
-                        label = "Tri ${sort.label}"
-                    )
-                }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(top = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            state.error?.let { error ->
+                Text(error, color = Color(0xFFFFB4AB), style = MaterialTheme.typography.bodyMedium)
             }
-            Text(
-                state.status,
-                color = Color(0xFFC9C6E4),
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 190.dp)
-            )
-        }
-        state.error?.let { error ->
-            Text(error, color = Color(0xFFFFB4AB), style = MaterialTheme.typography.bodyMedium)
-        }
-        if (state.mode == Mode.DOWNLOADS) {
-            StoragePanel(state, onClearImageCache)
-        }
-        if (state.loading) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+            if (state.mode == Mode.DOWNLOADS) {
+                StoragePanel(state, onClearImageCache)
             }
-        } else {
-            val rows = remember(
-                state.rows,
-                state.query,
-                state.filter4k,
-                state.filterHighRating,
-                state.filterRecentYear,
-                state.catalogSort
-            ) {
-                filteredRows(
-                    rows = state.rows,
-                    query = state.query,
-                    filter4k = state.filter4k,
-                    filterHighRating = state.filterHighRating,
-                    filterRecentYear = state.filterRecentYear,
-                    sort = state.catalogSort
-                )
-            }
-            if (rows.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        text = if (state.query.isBlank()) "Aucun contenu." else "Aucun résultat.",
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                }
+            if (state.loading) {
+                CatalogSkeleton(Modifier.weight(1f))
             } else {
-                LazyColumn(
-                    state = listState,
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
-                    contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 22.dp),
-                    modifier = Modifier.fillMaxSize()
+                val rows = remember(
+                    state.rows,
+                    state.query,
+                    state.filter4k,
+                    state.filterHighRating,
+                    state.filterRecentYear,
+                    state.catalogSort
                 ) {
-                    items(rows, key = { row -> row.title }) { row ->
-                        ContentRow(row, state.mode, state.favoriteKeys, onOpenItem, onToggleFavorite)
+                    filteredRows(
+                        rows = state.rows,
+                        query = state.query,
+                        filter4k = state.filter4k,
+                        filterHighRating = state.filterHighRating,
+                        filterRecentYear = state.filterRecentYear,
+                        sort = state.catalogSort
+                    )
+                }
+                val restoreRowIndex = remember(rows, restoreItemKey, restoreRowTitle) {
+                    restoreItemKey?.let { key ->
+                        rows.indexOfFirst { row ->
+                            row.title == restoreRowTitle && row.items.any { item -> item.key() == key }
+                        }.takeIf { index -> index >= 0 }
+                            ?: rows.indexOfFirst { row -> row.items.any { item -> item.key() == key } }
+                    } ?: -1
+                }
+                val effectiveRestoreRowTitle = remember(rows, restoreRowIndex) {
+                    rows.getOrNull(restoreRowIndex)?.title
+                }
+                LaunchedEffect(restoreItemKey, restoreRowIndex) {
+                    if (restoreItemKey == null) {
+                        return@LaunchedEffect
+                    }
+                    if (restoreRowIndex >= 0) {
+                        listState.scrollToItem(restoreRowIndex)
+                    } else {
+                        onRestoreConsumed()
+                    }
+                }
+                if (rows.isEmpty()) {
+                    PremiumEmptyState(
+                        title = if (state.query.isBlank()) "Aucun contenu" else "Aucun résultat",
+                        subtitle = emptyStateSubtitle(state),
+                        primaryAction = if (state.query.isBlank()) "Recharger" else "Effacer",
+                        onPrimaryAction = {
+                            if (state.query.isBlank()) onRefresh() else onSearch("")
+                        }
+                    )
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 18.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
+                        items(
+                            rows,
+                            key = { row -> row.title },
+                            contentType = { "catalog-row" }
+                        ) { row ->
+                            val rowState = rowListStates.getOrPut(row.title) { LazyListState() }
+                            ContentRow(
+                                row = row,
+                                mode = state.mode,
+                                favoriteKeys = state.favoriteKeys,
+                                rowState = rowState,
+                                restoreItemKey = restoreItemKey,
+                                restoreRowTitle = effectiveRestoreRowTitle,
+                                onRestoreConsumed = onRestoreConsumed,
+                                onOpenItem = { item -> onOpenItem(item, row.title) },
+                                onToggleFavorite = onToggleFavorite
+                            )
+                        }
                     }
                 }
             }
@@ -1647,27 +1945,111 @@ private fun CatalogScreen(
     }
 }
 
+private fun activeCatalogFilterCount(state: MainUiState): Int =
+    listOf(state.filter4k, state.filterHighRating, state.filterRecentYear).count { it }
+
+@Composable
+private fun ActiveCatalogControlSummary(
+    state: MainUiState,
+    activeFilterCount: Int,
+    onClear: () -> Unit
+) {
+    val labels = buildList {
+        if (state.filter4k) add("4K")
+        if (state.filterHighRating) add("Note 7+")
+        if (state.filterRecentYear) add("Année récente")
+        if (state.catalogSort != CatalogSort.RECENT) add("Tri ${state.catalogSort.label}")
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = labels.joinToString(" • "),
+            color = Color(0xFF47D3C2),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (activeFilterCount > 0 || state.catalogSort != CatalogSort.RECENT) {
+            CatalogHeaderButton(label = "Réinitialiser", modifier = Modifier.width(104.dp), onClick = onClear)
+        }
+    }
+}
+
+private fun CatalogSort.next(): CatalogSort {
+    val values = CatalogSort.entries
+    return values[(ordinal + 1) % values.size]
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ContentRow(
     row: XtreamModels.ContentRow,
     mode: Mode,
     favoriteKeys: Set<String>,
+    rowState: LazyListState,
+    restoreItemKey: String?,
+    restoreRowTitle: String?,
+    onRestoreConsumed: () -> Unit,
     onOpenItem: (XtreamModels.StreamItem) -> Unit,
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(row.title, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+    val visibleTitle = displayRowTitle(row.title)
+    val rowKind = premiumRowKind(row.title)
+    val premium = rowKind != null
+    val restoreIndex = remember(row.title, row.items, restoreItemKey, restoreRowTitle) {
+        restoreItemKey
+            ?.takeIf { restoreRowTitle == row.title }
+            ?.let { key -> row.items.indexOfFirst { item -> item.key() == key } }
+            ?: -1
+    }
+    LaunchedEffect(restoreIndex) {
+        if (restoreIndex >= 0) {
+            rowState.scrollToItem(restoreIndex)
+        }
+    }
+    val rowBringIntoViewRequester = remember { BringIntoViewRequester() }
+    val rowScope = rememberCoroutineScope()
+    Column(
+        modifier = Modifier.bringIntoViewRequester(rowBringIntoViewRequester),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        Text(
+            visibleTitle,
+            color = if (premium) Color(0xFFF3F5FF) else Color.White,
+            fontWeight = FontWeight.Bold,
+            style = if (premium) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleSmall
+        )
         LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+            state = rowState,
+            horizontalArrangement = Arrangement.spacedBy(if (premium) 12.dp else 10.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
         ) {
-            items(row.items, key = { item -> item.key() }) { item ->
+            items(
+                row.items,
+                key = { item -> item.key() },
+                contentType = { item -> item.type }
+            ) { item ->
                 ContentCard(
                     item = item,
                     compact = mode == Mode.LIVE,
+                    premium = premium,
+                    rowKind = rowKind,
                     mode = mode,
-                    rowTitle = row.title,
+                    rowTitle = visibleTitle,
                     favorite = favoriteKeys.contains(item.key()),
+                    restoreFocus = item.key() == restoreItemKey,
+                    onRestoreConsumed = onRestoreConsumed,
+                    onFocused = {
+                        rowScope.launch {
+                            delay(70L)
+                            rowBringIntoViewRequester.bringIntoView()
+                        }
+                    },
                     onClick = { onOpenItem(item) },
                     onLongClick = { onToggleFavorite(item) }
                 )
@@ -1676,14 +2058,116 @@ private fun ContentRow(
     }
 }
 
+@Composable
+private fun PremiumEmptyState(
+    title: String,
+    subtitle: String,
+    primaryAction: String,
+    onPrimaryAction: () -> Unit
+) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            color = Color(0xAA161B2F),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, Color(0xFF343B60)),
+            modifier = Modifier.widthIn(max = 560.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 28.dp, vertical = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(58.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF2B3565), Color(0xFF171B2E))
+                            )
+                        )
+                        .border(1.dp, Color(0xFF47D3C2), RoundedCornerShape(18.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("T", color = Color(0xFF47D3C2), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+                }
+                Text(title, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                Text(
+                    subtitle,
+                    color = Color(0xFFC9CDEB),
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                Button(onClick = onPrimaryAction) {
+                    Text(primaryAction)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CatalogSkeleton(modifier: Modifier = Modifier) {
+    LazyColumn(
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 22.dp),
+        modifier = modifier.fillMaxSize()
+    ) {
+        items(4, key = { index -> "skeleton-$index" }) { rowIndex ->
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SkeletonBlock(
+                    modifier = Modifier
+                        .width(if (rowIndex == 0) 260.dp else 190.dp)
+                        .height(24.dp)
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(7, key = { index -> "skeleton-$rowIndex-$index" }) {
+                        SkeletonBlock(
+                            modifier = Modifier
+                                .width(168.dp)
+                                .height(330.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SkeletonBlock(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        Color(0xFF202640),
+                        Color(0xFF30385D),
+                        Color(0xFF202640)
+                    )
+                )
+            )
+            .border(1.dp, Color(0xFF363D63), RoundedCornerShape(10.dp))
+    )
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ContentCard(
     item: XtreamModels.StreamItem,
     compact: Boolean,
+    premium: Boolean = false,
+    rowKind: PremiumRowKind? = null,
     mode: Mode? = null,
     rowTitle: String = "",
     favorite: Boolean = false,
+    restoreFocus: Boolean = false,
+    onRestoreConsumed: () -> Unit = {},
+    onFocused: () -> Unit = {},
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
@@ -1692,17 +2176,63 @@ private fun ContentCard(
     val localSize = remember(item.key(), mode) {
         if (mode == Mode.DOWNLOADS) downloadedSize(context, item) else -1L
     }
-    val meta = if (localSize > 0L) "${metaLabel(item)} | ${formatBytes(localSize)}" else metaLabel(item)
-    val cardWidth = if (compact) 188.dp else 168.dp
-    val cardHeight = if (compact) 196.dp else 346.dp
-    val posterHeight = if (compact) 106.dp else 252.dp
+    val resumeMeta = remember(item.key(), rowKind) {
+        if (rowKind == PremiumRowKind.HISTORY) resumeCardMeta(context, item) else ""
+    }
+    val meta = cardMeta(item, localSize, resumeMeta)
+    val cardWidth = when {
+        compact -> 170.dp
+        premium -> 166.dp
+        else -> 150.dp
+    }
+    val cardHeight = when {
+        compact -> 174.dp
+        premium -> 326.dp
+        else -> 304.dp
+    }
+    val posterHeight = when {
+        compact -> 94.dp
+        premium -> 246.dp
+        else -> 224.dp
+    }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val focusRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
+    var remoteLongClickHandled by remember { mutableStateOf(false) }
+    LaunchedEffect(restoreFocus) {
+        if (restoreFocus) {
+            delay(90L)
+            focusRequester.requestFocus()
+            bringIntoViewRequester.bringIntoView()
+            onRestoreConsumed()
+        }
+    }
     varFocusedSurface(
         modifier = Modifier
             .bringIntoViewRequester(bringIntoViewRequester)
+            .focusRequester(focusRequester)
+            .onPreviewKeyEvent { event ->
+                val native = event.nativeKeyEvent
+                val isConfirmKey = native.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                    native.keyCode == KeyEvent.KEYCODE_ENTER
+                if (!isConfirmKey || onLongClick == null) {
+                    false
+                } else when {
+                    event.type == KeyEventType.KeyDown && native.repeatCount == 1 -> {
+                        remoteLongClickHandled = true
+                        onLongClick.invoke()
+                        true
+                    }
+                    event.type == KeyEventType.KeyUp && remoteLongClickHandled -> {
+                        remoteLongClickHandled = false
+                        true
+                    }
+                    else -> false
+                }
+            }
             .onFocusChanged { focusState ->
                 if (focusState.isFocused) {
+                    onFocused()
                     scope.launch {
                         delay(80L)
                         bringIntoViewRequester.bringIntoView()
@@ -1721,8 +2251,8 @@ private fun ContentCard(
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(7.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             PosterWithBadges(
                 item = item,
@@ -1732,8 +2262,10 @@ private fun ContentCard(
                     .fillMaxWidth()
                     .height(posterHeight)
             )
-            Text(item.title, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
-            Text(meta, color = Color(0xFFC9C6E4), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+            Text(item.title, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+            if (meta.isNotBlank()) {
+                Text(meta, color = Color(0xFFC9C6E4), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
@@ -1745,7 +2277,7 @@ private fun DetailScreen(
     onBack: () -> Unit,
     onPlay: (XtreamModels.StreamItem) -> Unit,
     onPlayFromStart: (XtreamModels.StreamItem) -> Unit,
-    onPreload: (XtreamModels.StreamItem) -> Unit,
+    onPreload: (XtreamModels.StreamItem, PreloadMode) -> Unit,
     onCancelPreload: () -> Unit,
     onConvertPreload: (XtreamModels.StreamItem) -> Unit,
     onTrailer: (String, String) -> Unit,
@@ -1760,24 +2292,42 @@ private fun DetailScreen(
     val isPreloading = state.preloadingItem?.key() == item.key()
     val isFavorite = state.favoriteKeys.contains(item.key())
     val isDownloaded = state.selectedDownloaded || state.mode == Mode.DOWNLOADS
-    Column(
+    val playFocusRequester = remember { FocusRequester() }
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(28.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(Color(0x663653FF), Color.Transparent),
+                    radius = 760f
+                )
+            )
     ) {
-        DetailActionButton(label = "Retour", onClick = onBack, modifier = Modifier.width(116.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(22.dp), modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 22.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        DetailActionButton(label = "Retour", onClick = onBack, modifier = Modifier.width(94.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.fillMaxSize()) {
             PosterWithBadges(
                 item = item,
                 qualityHint = state.selectedQualityHint,
                 ratingOverride = state.selectedDetail?.rating,
                 favorite = isFavorite,
-                modifier = Modifier.width(220.dp).aspectRatio(2f / 3f)
+                modifier = Modifier.width(186.dp).aspectRatio(2f / 3f)
             )
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text(item.title, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text(metaLabel(item), color = Color(0xFFC9C6E4))
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text(
+                    item.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                DetailMetaPills(state, item, isDownloaded, isFavorite)
                 ContentSizeStatus(state, item)
                 state.error?.let { Text(it, color = Color(0xFFFFB4AB)) }
                 if (isDownloading) {
@@ -1791,66 +2341,77 @@ private fun DetailScreen(
                     )
                 } else {
                     val canPlay = isDownloaded || item.playable || item.type == XtreamModels.StreamItem.TYPE_LIVE
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
-                    ) {
-                        item {
-                            DetailActionButton(
-                                label = if (state.selectedResumePositionMs > PlaybackPolicy.RESUME_THRESHOLD_MS) "Reprendre" else "Lire",
-                                enabled = canPlay,
-                                primary = true,
-                                onClick = { onPlay(item) }
-                            )
+                    val hasResume = state.selectedResumePositionMs > PlaybackPolicy.RESUME_THRESHOLD_MS
+                    val trailer = state.selectedDetail?.trailer.orEmpty()
+                    val showFavoriteAction = !isDownloaded
+                    LaunchedEffect(item.key(), canPlay) {
+                        if (canPlay) {
+                            delay(120L)
+                            playFocusRequester.requestFocus()
                         }
-                        if (state.selectedResumePositionMs > PlaybackPolicy.RESUME_THRESHOLD_MS) {
-                            item {
+                    }
+                    DetailActionGroup {
+                        DetailActionButton(
+                            label = if (hasResume) "Reprendre" else "Lire",
+                            modifier = Modifier.focusRequester(playFocusRequester),
+                            enabled = canPlay,
+                            primary = true,
+                            onClick = { onPlay(item) }
+                        )
+                        if (hasResume) {
                                 DetailActionButton(
                                     label = "Depuis début",
                                     enabled = canPlay,
                                     onClick = { onPlayFromStart(item) }
                                 )
-                            }
                         }
-                        if (isDownloaded) {
-                            item {
+                        if (trailer.isNotBlank()) {
+                            DetailActionButton(label = "Bande-annonce", onClick = { onTrailer(item.title, trailer) })
+                        }
+                        if (showFavoriteAction) {
+                            DetailActionButton(
+                                label = if (isFavorite) "Favori ✓" else "Favori",
+                                onClick = { onFavorite(item) }
+                            )
+                        }
+                    }
+                    if (isDownloaded) {
+                        DetailActionGroup {
                                 DetailActionButton(
                                     label = "Supprimer",
                                     destructive = true,
                                     onClick = { onDeleteDownload(item) }
                                 )
+                        }
+                    } else if (item.type != XtreamModels.StreamItem.TYPE_LIVE && item.type != XtreamModels.StreamItem.TYPE_SERIES) {
+                        PreloadHelpText(canOfferCompletePreload = canOfferCompletePreload(state))
+                        DetailActionGroup(title = "Précharger avant lecture") {
+                            DetailActionButton(label = PreloadMode.NORMAL.label, onClick = { onPreload(item, PreloadMode.NORMAL) })
+                            DetailActionButton(label = PreloadMode.LONG.label, onClick = { onPreload(item, PreloadMode.LONG) })
+                            if (canOfferCompletePreload(state)) {
+                                DetailActionButton(label = PreloadMode.COMPLETE.label, onClick = { onPreload(item, PreloadMode.COMPLETE) })
                             }
-                        } else {
-                            if (item.type != XtreamModels.StreamItem.TYPE_SERIES) {
-                                item {
-                                    DetailActionButton(label = "Tamponner", onClick = { onPreload(item) })
-                                }
-                            }
-                            val trailer = state.selectedDetail?.trailer.orEmpty()
-                            if (trailer.isNotBlank()) {
-                                item {
-                                    DetailActionButton(label = "Bande-annonce", onClick = { onTrailer(item.title, trailer) })
-                                }
-                            }
-                            if (item.type != XtreamModels.StreamItem.TYPE_LIVE && item.type != XtreamModels.StreamItem.TYPE_SERIES) {
-                                item {
-                                    DetailActionButton(label = "Télécharger", onClick = { onDownload(item) })
-                                }
-                            }
-                            item {
-                                DetailActionButton(
-                                    label = if (isFavorite) "Retirer favori" else "Ajouter favori",
-                                    onClick = { onFavorite(item) }
-                                )
-                            }
+                            DetailActionButton(label = "Télécharger", onClick = { onDownload(item) })
+                        }
+                    } else if (item.type == XtreamModels.StreamItem.TYPE_LIVE) {
+                        PreloadHelpText(canOfferCompletePreload = false, completeSupported = false)
+                        DetailActionGroup(title = "Précharger le direct") {
+                            DetailActionButton(label = PreloadMode.NORMAL.label, onClick = { onPreload(item, PreloadMode.NORMAL) })
+                            DetailActionButton(label = PreloadMode.LONG.label, onClick = { onPreload(item, PreloadMode.LONG) })
                         }
                     }
                     if (isDownloaded) {
                         StoragePanel(state, onClearImageCache)
                     }
                     val detail = state.selectedDetail
-                    if (detail != null && detail.hasContent()) {
-                        Text(detailText(detail), color = Color.White, style = MaterialTheme.typography.bodyLarge)
+                    if (detail != null) {
+                        val extraDetail = compactDetailText(detail)
+                        if (detail.plot.isNotBlank() || extraDetail.isNotBlank()) {
+                            DetailInfoPanel(
+                                synopsis = detail.plot,
+                                extra = extraDetail
+                            )
+                        }
                     }
                     val series = state.seriesInfo
                     if (series != null) {
@@ -1873,6 +2434,104 @@ private fun DetailScreen(
             }
         }
     }
+    }
+}
+
+@Composable
+private fun DetailInfoPanel(synopsis: String, extra: String) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0xAA161B2F),
+        border = BorderStroke(1.dp, Color(0xFF343B60)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "Synopsis",
+                color = Color(0xFF47D3C2),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Black
+            )
+            if (synopsis.isNotBlank()) {
+                Text(
+                    text = synopsis,
+                    color = Color(0xFFF4F5FF),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            if (extra.isNotBlank()) {
+                Text(
+                    text = extra,
+                    color = Color(0xFFC9C6E4),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailMetaPills(
+    state: MainUiState,
+    item: XtreamModels.StreamItem,
+    downloaded: Boolean,
+    favorite: Boolean
+) {
+    val detail = state.selectedDetail
+    val typeLabel = metaLabel(item)
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        if (typeLabel.isNotBlank()) {
+            DetailMetaPill(typeLabel)
+        }
+        displayRating(detail?.rating, item.rating)?.let { rating ->
+            DetailMetaPill("★ $rating", accent = Color(0xFFFFD166), foreground = Color(0xFF191100))
+        }
+        if (isUltraHd(item, state.selectedQualityHint)) {
+            DetailMetaPill("4K", accent = Color(0xFF47D3C2), foreground = Color(0xFF071412))
+        }
+        item.year.takeIf { it.isNotBlank() }?.let { year ->
+            DetailMetaPill(year)
+        }
+        detail?.duration?.takeIf { it.isNotBlank() }?.let { duration ->
+            DetailMetaPill(duration)
+        }
+        detail?.genre?.takeIf { it.isNotBlank() }?.let { genre ->
+            DetailMetaPill(genre)
+        }
+        if (downloaded) {
+            DetailMetaPill("Téléchargé", accent = Color(0xFF8FA2FF), foreground = Color(0xFF090B18))
+        }
+        if (favorite) {
+            DetailMetaPill("Favori", accent = Color(0xFFFF5F87), foreground = Color.White)
+        }
+    }
+}
+
+@Composable
+private fun DetailMetaPill(
+    text: String,
+    accent: Color = Color(0xFF262B48),
+    foreground: Color = Color(0xFFE9ECFF)
+) {
+    Text(
+        text = text,
+        color = foreground,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(accent)
+            .padding(horizontal = 10.dp, vertical = 5.dp)
+    )
 }
 
 @Composable
@@ -1888,12 +2547,66 @@ private fun ContentSizeStatus(
     }
     Text(
         text = if (state.selectedDownloaded) {
-            "Disponible localement - ${formatBytes(state.selectedSizeBytes)}"
+            "Téléchargé - ${formatBytes(state.selectedSizeBytes)}"
         } else {
             "Poids connu: ${formatBytes(state.selectedSizeBytes)}"
         },
         color = Color.White
     )
+}
+
+@Composable
+private fun PreloadHelpText(canOfferCompletePreload: Boolean, completeSupported: Boolean = true) {
+    val text = when {
+        canOfferCompletePreload ->
+            "Précharge une avance pour éviter les coupures. Le contenu n'est pas conservé, sauf conversion en téléchargement."
+        completeSupported ->
+            "Précharge une avance pour éviter les coupures. Le mode complet apparaît seulement si le stockage disponible le permet."
+        else ->
+            "Précharge une avance pour éviter les coupures si le réseau est instable."
+    }
+    Text(
+        text = text,
+        color = Color(0xFFC9C6E4),
+        style = MaterialTheme.typography.bodySmall,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis
+    )
+}
+
+private fun canOfferCompletePreload(state: MainUiState): Boolean {
+    val contentSize = state.selectedSizeBytes
+    val available = state.storageAvailableBytes
+    if (contentSize <= 0L || available <= 0L) {
+        return false
+    }
+    val required = contentSize + StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES
+    return required > contentSize && available >= required
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailActionGroup(
+    title: String? = null,
+    content: @Composable () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        if (!title.isNullOrBlank()) {
+            Text(
+                text = title,
+                color = Color(0xFFC9C6E4),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            content()
+        }
+    }
 }
 
 @Composable
@@ -1914,8 +2627,8 @@ private fun DetailActionButton(
     }
     Surface(
         modifier = modifier
-            .height(42.dp)
-            .widthIn(min = 104.dp, max = 190.dp)
+            .height(34.dp)
+            .widthIn(min = 86.dp, max = 164.dp)
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
                 scaleX = if (focused) 1.025f else 1f
@@ -1948,7 +2661,7 @@ private fun DetailActionButton(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 14.dp),
+                .padding(horizontal = 10.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
@@ -1959,7 +2672,7 @@ private fun DetailActionButton(
                     destructive -> Color(0xFFFFC5CD)
                     else -> Color.White
                 },
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -2001,35 +2714,33 @@ private fun PreloadOnlyActions(
     onCancelPreload: () -> Unit,
     onConvertToDownload: () -> Unit
 ) {
-    val total = state.preloadTotal
-    val progress = if (total > 0L) (state.preloadBytes.toFloat() / total.toFloat()).coerceIn(0f, 1f) else 0f
-    val ready = state.preloadBytes >= state.networkProfile.preloadReadyBytes
+    val readyBytes = DETAIL_PRELOAD_READY_BYTES
+    val progress = (state.preloadBytes.toFloat() / readyBytes.toFloat()).coerceIn(0f, 1f)
+    val ready = state.preloadBytes >= readyBytes
+    val modeLabel = state.preloadModeLabel.ifBlank { PreloadMode.NORMAL.label }
+    val readyLabel = when (modeLabel) {
+        PreloadMode.LONG.label -> "Préchargement avancé prêt"
+        PreloadMode.COMPLETE.label -> "Préchargement complet prêt"
+        else -> "Préchargement prêt"
+    }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.widthIn(max = 520.dp)) {
         Text(
             when {
                 state.preloadConverting -> "Conversion en téléchargement"
-                ready -> "Tampon prêt"
-                else -> "Tampon en cours"
+                ready -> readyLabel
+                else -> "Pré-chargement du film en cours"
             },
             color = Color.White,
             fontWeight = FontWeight.Bold
         )
-        if (total > 0L) {
-            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-            Text(
-                "${formatBytes(state.preloadBytes)} / objectif ${formatBytes(state.networkProfile.preloadReadyBytes)}",
-                color = Color.White
-            )
-        } else {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            Text(
-                "${formatBytes(state.preloadBytes)} en tampon / objectif ${formatBytes(state.networkProfile.preloadReadyBytes)}",
-                color = Color.White
-            )
-        }
+        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+        Text(
+            "${(progress * 100).toInt()}% - ${formatBytes(state.preloadBytes.coerceAtMost(readyBytes))} / ${formatBytes(readyBytes)}",
+            color = Color.White
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             DetailActionButton(
-                label = "Lire depuis début",
+                label = "Lire",
                 enabled = ready && !state.preloadCancelling && !state.preloadConverting,
                 primary = true,
                 onClick = onPlay
@@ -2057,6 +2768,10 @@ private fun SettingsScreen(
     onNetworkProfile: (NetworkProfile) -> Unit,
     onCycleBuffer: () -> Unit,
     onLiveFormat: (String) -> Unit,
+    onClearCatalogFilters: () -> Unit,
+    onClearImageCache: () -> Unit,
+    onClearPreloadCache: () -> Unit,
+    onClearCatalogCache: () -> Unit,
     onLogout: () -> Unit
 ) {
     Column(
@@ -2064,17 +2779,33 @@ private fun SettingsScreen(
             .fillMaxSize()
             .padding(32.dp)
             .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Réglages", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Button(onClick = onClose) { Text("Retour") }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Réglages", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+                Text(
+                    "Connexion, stockage, player et télécommande",
+                    color = Color(0xFFC9CDEB),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            DetailActionButton(label = "Retour", onClick = onClose, modifier = Modifier.width(118.dp))
         }
-        SettingSwitch("Mode 1 connexion distante", "Garde un seul appel remote actif à la fois.", state.singleConnectionMode, onToggleSingleConnection)
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Profil réseau", color = Color.White, fontWeight = FontWeight.Bold)
+
+        SettingsSectionCard(
+            title = "Sécurité remote",
+            subtitle = "La règle importante reste visible et activable ici."
+        ) {
+            SettingSwitch("Mode 1 connexion distante", "Garde un seul appel remote actif à la fois.", state.singleConnectionMode, onToggleSingleConnection)
+        }
+
+        SettingsSectionCard(
+            title = "Profil réseau",
+            subtitle = "Choisis le comportement adapté à ton Wi-Fi, VPN ou débit."
+        ) {
             Text(
-                "Choisis une carte avec OK. Le profil change immédiatement le buffer, le format live et la taille du tampon.",
+                "OK sur une carte applique immédiatement le buffer, le format live et la taille du préchargement.",
                 color = Color(0xFFC9C6E4),
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -2089,24 +2820,112 @@ private fun SettingsScreen(
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Format live", color = Color.White, modifier = Modifier.width(170.dp))
-            FilterChip(selected = state.liveFormat == "ts", onClick = { onLiveFormat("ts") }, label = { Text("TS") })
-            FilterChip(selected = state.liveFormat == "m3u8", onClick = { onLiveFormat("m3u8") }, label = { Text("M3U8") })
+
+        SettingsSectionCard(
+            title = "Player",
+            subtitle = "Réglages utiles selon l’écran et la stabilité du flux."
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Format live", color = Color.White, modifier = Modifier.width(170.dp))
+                FilterChip(selected = state.liveFormat == "ts", onClick = { onLiveFormat("ts") }, label = { Text("TS") })
+                FilterChip(selected = state.liveFormat == "m3u8", onClick = { onLiveFormat("m3u8") }, label = { Text("M3U8") })
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Buffer lecteur: ${state.playerBufferMs} ms", color = Color.White, modifier = Modifier.width(220.dp))
+                OutlinedButton(onClick = onCycleBuffer) { Text("Changer") }
+            }
+            Text(
+                "Préchargement: lecture après ${formatBytes(state.networkProfile.preloadReadyBytes)}, avance profil ${formatPreloadTarget(state.networkProfile.preloadAheadBytes)}",
+                color = Color(0xFFC9C6E4),
+                style = MaterialTheme.typography.bodySmall
+            )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Buffer lecteur: ${state.playerBufferMs} ms", color = Color.White, modifier = Modifier.width(220.dp))
-            OutlinedButton(onClick = onCycleBuffer) { Text("Changer") }
+
+        SettingsSectionCard(
+            title = "Catalogue",
+            subtitle = "Options d'affichage rapides pour retrouver une vue propre."
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Filtres et tri", color = Color.White, modifier = Modifier.weight(1f))
+                OutlinedButton(onClick = onClearCatalogFilters) {
+                    Text("Réinitialiser")
+                }
+            }
+            Text(
+                "Remet 4K, note, année et tri sur les valeurs par défaut.",
+                color = Color(0xFFC9C6E4),
+                style = MaterialTheme.typography.bodySmall
+            )
         }
-        Text(
-            "Tampon: lecture après ${formatBytes(state.networkProfile.preloadReadyBytes)}, avance max ${formatBytes(state.networkProfile.preloadAheadBytes)}",
-            color = Color(0xFFC9C6E4),
-            style = MaterialTheme.typography.bodySmall
-        )
+
+        SettingsSectionCard(
+            title = "Stockage et caches",
+            subtitle = "Nettoie les données temporaires sans supprimer tes films téléchargés."
+        ) {
+            StorageOverviewRows(state)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onClearImageCache) {
+                    Text("Vider affiches")
+                }
+                OutlinedButton(onClick = onClearPreloadCache) {
+                    Text("Vider préchargement")
+                }
+                OutlinedButton(onClick = onClearCatalogCache) {
+                    Text("Vider catalogue")
+                }
+            }
+            Text(
+                "Les téléchargements conservés ne sont pas supprimés ici.",
+                color = Color(0xFFC9C6E4),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
         RemoteHelpPanel()
-        OutlinedButton(onClick = onLogout, colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFB4AB))) {
-            Text("Déconnecter le compte")
+
+        SettingsSectionCard(
+            title = "Compte",
+            subtitle = "Changer de compte conserve l’app, mais réinitialise l’accès courant."
+        ) {
+            OutlinedButton(onClick = onLogout, colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFB4AB))) {
+                Text("Déconnecter le compte")
+            }
         }
+    }
+}
+
+@Composable
+private fun SettingsSectionCard(
+    title: String,
+    subtitle: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Surface(
+        color = Color(0xAA171B2E),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, Color(0xFF343B60)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
+                Text(subtitle, color = Color(0xFF9EA7CD), style = MaterialTheme.typography.bodySmall)
+            }
+            content()
+        }
+    }
+}
+
+@Composable
+private fun StorageOverviewRows(state: MainUiState) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.widthIn(max = 620.dp)) {
+        StorageMetricRow("Espace libre", state.storageAvailableBytes)
+        StorageMetricRow("Téléchargements", state.storageDownloadBytes)
+        StorageMetricRow("Cache affiches", state.storagePosterCacheBytes)
+        StorageMetricRow("Préchargement temporaire", state.storageTamponCacheBytes)
     }
 }
 
@@ -2121,8 +2940,8 @@ private fun RemoteHelpPanel() {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Aide télécommande", color = Color.White, fontWeight = FontWeight.Bold)
             RemoteShortcutRow("OK / Centre", "ouvrir, valider, pause/lecture dans le player")
-            RemoteShortcutRow("Droite / Gauche", "avancer ou reculer de 10 secondes si le flux le permet")
-            RemoteShortcutRow("Avance rapide / Retour rapide", "saut de 30 secondes dans le player")
+            RemoteShortcutRow("Droite / Gauche", "reculer de 15s ou avancer de 30s si le flux le permet")
+            RemoteShortcutRow("Maintenir gauche/droite", "défilement visuel, seek réel au relâchement")
             RemoteShortcutRow("Menu", "ouvrir les réglages ou le diagnostic player")
             RemoteShortcutRow("Retour", "revenir à l’écran précédent")
         }
@@ -2183,7 +3002,7 @@ private fun NetworkProfileCard(
                 maxLines = 1
             )
             Text(
-                "Tampon ${formatBytes(profile.preloadReadyBytes)}",
+                "Précharge ${formatBytes(profile.preloadReadyBytes)}",
                 color = Color(0xFFB9C0E4),
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1
@@ -2255,8 +3074,8 @@ private fun CatalogHeaderButton(
     val shape = RoundedCornerShape(999.dp)
     Surface(
         modifier = modifier
-            .height(34.dp)
-            .widthIn(min = 76.dp)
+            .height(29.dp)
+            .widthIn(min = 68.dp)
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
                 scaleX = if (focused) 1.025f else 1f
@@ -2330,10 +3149,10 @@ private fun StoragePanel(state: MainUiState, onClearImageCache: () -> Unit) {
             )
             StorageMetricRow("Téléchargements", state.storageDownloadBytes)
             StorageMetricRow("Cache affiches", state.storagePosterCacheBytes)
-            StorageMetricRow("Tampon temporaire", state.storageTamponCacheBytes)
+            StorageMetricRow("Préchargement temporaire", state.storageTamponCacheBytes)
             if (available < 768L * 1024L * 1024L) {
                 Text(
-                    "Stockage bas: téléchargement et tampon peuvent être bloqués.",
+                    "Stockage bas: téléchargement et préchargement peuvent être bloqués.",
                     color = Color(0xFFFFB4AB),
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Bold
@@ -2354,7 +3173,7 @@ private fun TvSearchButton(
 ) {
     varFocusedSurface(
         modifier = modifier
-            .height(34.dp)
+            .height(30.dp)
             .clickable(onClick = onClick)
             .focusable(),
         shape = RoundedCornerShape(10.dp)
@@ -2370,12 +3189,12 @@ private fun TvSearchButton(
                 text = "Recherche",
                 color = Color(0xFF47D3C2),
                 fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.labelMedium
+                style = MaterialTheme.typography.labelSmall
             )
             Text(
-                text = query.ifBlank { "OK pour saisir, ou Micro pour dicter" },
+                text = query.ifBlank { "OK pour saisir" },
                 color = if (query.isBlank()) Color(0xFFC9C6E4) else Color.White,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
@@ -2467,19 +3286,47 @@ private fun StorageMetricRow(label: String, bytes: Long) {
 }
 
 @Composable
+private fun CatalogControlSeparator() {
+    Box(
+        modifier = Modifier
+            .height(30.dp)
+            .padding(horizontal = 5.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .height(20.dp)
+                .background(Color(0xFF3A4065))
+        )
+    }
+}
+
+@Composable
 private fun TvChip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     varFocusedSurface(
-        modifier = modifier.clickable(onClick = onClick).focusable(),
+        modifier = modifier
+            .height(30.dp)
+            .clickable(onClick = onClick)
+            .focusable(),
         selected = selected,
         shape = RoundedCornerShape(10.dp)
     ) {
-        Text(
-            label,
-            color = Color.White,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-        )
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(horizontal = 9.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                label,
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -2524,7 +3371,11 @@ private fun PosterWithBadges(
     favorite: Boolean = false
 ) {
     BoxWithConstraints(modifier) {
-        Poster(url = item.imageUrl, modifier = Modifier.fillMaxSize())
+        Poster(
+            url = item.imageUrl,
+            title = item.title,
+            modifier = Modifier.fillMaxSize()
+        )
         if (favorite) {
             val heartSize = when {
                 maxWidth < 150.dp -> 22.dp
@@ -2591,27 +3442,75 @@ private fun PosterBadge(
 }
 
 @Composable
-private fun Poster(url: String?, modifier: Modifier) {
+private fun Poster(url: String?, title: String, modifier: Modifier) {
     val context = LocalContext.current
     val loader = remember { PosterLoader(context) }
+    val cleanUrl = url?.trim().orEmpty()
     DisposableEffect(loader) {
         onDispose { loader.shutdown() }
     }
-    AndroidView(
+    Box(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF232640))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        Color(0xFF2A2F55),
+                        Color(0xFF15182A),
+                        Color(0xFF232640)
+                    )
+                )
+            )
             .border(1.dp, Color(0xFF333656), RoundedCornerShape(8.dp)),
-        factory = { ctx ->
-            ImageView(ctx).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                setBackgroundColor(0xFF232640.toInt())
-            }
-        },
-        update = { imageView ->
-            loader.load(url, imageView, 0xFF232640.toInt())
+        contentAlignment = Alignment.Center
+    ) {
+        if (cleanUrl.isBlank()) {
+            PosterFallback(title = title)
+        } else {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    ImageView(ctx).apply {
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        setBackgroundColor(0x00000000)
+                    }
+                },
+                update = { imageView ->
+                    loader.load(cleanUrl, imageView, 0x00000000)
+                }
+            )
         }
-    )
+    }
+}
+
+@Composable
+private fun PosterFallback(title: String) {
+    Column(
+        modifier = Modifier.padding(14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = title.take(1).uppercase(Locale.FRANCE).ifBlank { "T" },
+            color = Color(0xFF47D3C2),
+            style = MaterialTheme.typography.headlineLarge,
+            fontWeight = FontWeight.Black
+        )
+        Text(
+            text = title,
+            color = Color(0xFFE8EAFB),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = "Affiche indisponible",
+            color = Color(0xFF9EA7CD),
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1
+        )
+    }
 }
 
 private fun filteredRows(
@@ -2625,7 +3524,9 @@ private fun filteredRows(
     val clean = query.trim().lowercase(Locale.US)
     val recentYearFloor = Calendar.getInstance().get(Calendar.YEAR) - 1
     return rows.mapNotNull { row ->
-        val rowMatchesQuery = clean.isEmpty() || row.title.lowercase(Locale.US).contains(clean)
+        val isPremiumRow = premiumRowKind(row.title) != null
+        val visibleRowTitle = displayRowTitle(row.title)
+        val rowMatchesQuery = clean.isEmpty() || visibleRowTitle.lowercase(Locale.US).contains(clean)
         val items = row.items
             .filter { item ->
                 val queryMatches = rowMatchesQuery ||
@@ -2637,10 +3538,20 @@ private fun filteredRows(
                     (!filterHighRating || numericRating(item.rating) >= 7f) &&
                     (!filterRecentYear || item.year.toIntOrNull()?.let { year -> year >= recentYearFloor } == true)
             }
-            .sortedForCatalog(sort)
+            .let { filteredItems ->
+                if (isPremiumRow) filteredItems else filteredItems.sortedForCatalog(sort)
+            }
         if (items.isEmpty()) null else XtreamModels.ContentRow(row.title, items)
     }
 }
+
+private fun emptyStateSubtitle(state: MainUiState): String =
+    when {
+        state.query.isNotBlank() -> "Aucun titre ne correspond à cette recherche. Efface le filtre pour revenir au catalogue."
+        state.mode == Mode.FAVORITES -> "Ajoute un favori avec un clic long sur une miniature, ou depuis la fiche du film."
+        state.mode == Mode.DOWNLOADS -> "Les films téléchargés apparaîtront ici avec leur poids et les actions hors ligne."
+        else -> "Le catalogue peut être vide ou pas encore chargé. Lance une actualisation depuis cette page."
+    }
 
 private fun List<XtreamModels.StreamItem>.sortedForCatalog(sort: CatalogSort): List<XtreamModels.StreamItem> =
     when (sort) {
@@ -2656,9 +3567,25 @@ private fun List<XtreamModels.StreamItem>.sortedForCatalog(sort: CatalogSort): L
     }
 
 private fun numericRating(value: String?): Float {
-    val normalized = value?.trim()?.replace(',', '.') ?: return 0f
-    val numeric = normalized.toFloatOrNull() ?: return 0f
-    return if (numeric > 10f) numeric / 10f else numeric
+    val normalized = value
+        ?.trim()
+        ?.replace(',', '.')
+        ?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+        ?: return 0f
+    val fractionMatch = RatingFractionRegex.find(normalized)
+    if (fractionMatch != null) {
+        val score = fractionMatch.groupValues[1].toFloatOrNull() ?: return 0f
+        val maxScore = fractionMatch.groupValues[2].toFloatOrNull()?.takeIf { it > 0f } ?: return 0f
+        return (score / maxScore * 10f).coerceIn(0f, 10f)
+    }
+    val numeric = RatingNumberRegex.find(normalized)?.value?.toFloatOrNull() ?: return 0f
+    val scaled = when {
+        "%" in normalized -> numeric / 10f
+        numeric > 100f -> numeric / 100f
+        numeric > 10f -> numeric / 10f
+        else -> numeric
+    }
+    return scaled.coerceIn(0f, 10f)
 }
 
 private fun rowsWithRating(
@@ -2696,13 +3623,41 @@ private fun XtreamModels.StreamItem.withRating(rating: String): XtreamModels.Str
     )
 }
 
+private fun cardMeta(item: XtreamModels.StreamItem, localSize: Long, resumeMeta: String): String =
+    listOf(
+        resumeMeta,
+        metaLabel(item),
+        if (localSize > 0L) formatBytes(localSize) else ""
+    ).filter { value -> value.isNotBlank() }.joinToString(" | ")
+
+private fun resumeCardMeta(context: Context, item: XtreamModels.StreamItem): String {
+    val store = AppStateStore(context)
+    val position = store.resumePosition(item)
+    val duration = store.resumeDuration(item.key())
+    return when {
+        duration > position + 60_000L -> "Reste ${formatDurationLabel(duration - position)}"
+        position > PlaybackPolicy.RESUME_THRESHOLD_MS -> "Reprendre à ${formatDurationLabel(position)}"
+        else -> ""
+    }
+}
+
+private fun formatDurationLabel(ms: Long): String {
+    val totalMinutes = (ms / 60_000L).coerceAtLeast(0L)
+    val hours = totalMinutes / 60L
+    val minutes = totalMinutes % 60L
+    return if (hours > 0L) {
+        "${hours}h${minutes.toString().padStart(2, '0')}"
+    } else {
+        "${minutes}min"
+    }
+}
+
 private fun metaLabel(item: XtreamModels.StreamItem): String {
     val parts = mutableListOf<String>()
     if (item.year.isNotBlank()) parts.add(item.year)
-    if (item.rating.isNotBlank()) parts.add("★ ${item.rating}")
     if (item.releaseDate.isNotBlank()) parts.add(item.releaseDate)
     if (item.type == XtreamModels.StreamItem.TYPE_EPISODE) parts.add("Episode")
-    return parts.ifEmpty { listOf(item.type) }.joinToString(" | ")
+    return parts.joinToString(" | ")
 }
 
 private fun isUltraHd(item: XtreamModels.StreamItem, qualityHint: String = ""): Boolean {
@@ -2742,15 +3697,11 @@ private fun downloadedSize(context: Context, item: XtreamModels.StreamItem): Lon
 private fun safeFileName(value: String): String =
     value.replace(Regex("[^A-Za-z0-9._-]+"), "_").trim('_').ifEmpty { "video" }
 
-private fun detailText(detail: XtreamModels.ItemDetail): String {
+private fun compactDetailText(detail: XtreamModels.ItemDetail): String {
     val parts = mutableListOf<String>()
-    if (detail.plot.isNotBlank()) parts.add(detail.plot)
-    if (detail.genre.isNotBlank()) parts.add("Genre: ${detail.genre}")
-    if (detail.duration.isNotBlank()) parts.add("Durée: ${detail.duration}")
-    if (detail.rating.isNotBlank()) parts.add("Note: ${detail.rating}")
     if (detail.cast.isNotBlank()) parts.add("Casting: ${detail.cast}")
     if (detail.director.isNotBlank()) parts.add("Réalisation: ${detail.director}")
-    return parts.joinToString("\n\n")
+    return parts.joinToString("\n")
 }
 
 private fun formatBytes(bytes: Long): String {
@@ -2764,6 +3715,9 @@ private fun formatBytes(bytes: Long): String {
     }
     return String.format(Locale.FRANCE, "%.2f %s", value, units[index])
 }
+
+private fun formatPreloadTarget(bytes: Long): String =
+    if (bytes >= BUFFER_COMPLETE_AHEAD_BYTES / 2L) "complet temporaire" else formatBytes(bytes)
 
 private fun formatSpeed(bytesPerSecond: Long): String {
     if (bytesPerSecond <= 0L) return "vitesse en cours"

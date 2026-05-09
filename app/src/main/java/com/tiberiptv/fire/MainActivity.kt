@@ -1567,42 +1567,89 @@ private fun CatalogScreen(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 14.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp)
+        verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
         var searchDialogVisible by remember { mutableStateOf(false) }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = state.mode.label,
-                color = Color.White,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xB0161830))
+                .border(1.dp, Color(0xFF303656), RoundedCornerShape(14.dp))
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = state.mode.label,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                CatalogHeaderButton(
+                    label = "Profil: ${state.networkProfile.label}",
+                    contentColor = networkProfileAccent(state.networkProfile),
+                    onClick = onSettings,
+                    modifier = Modifier.width(170.dp)
+                )
+                CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(84.dp), onClick = onHome)
+                CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(94.dp), onClick = onSettings)
+                CatalogHeaderButton(label = "Recharger", modifier = Modifier.width(108.dp), enabled = !state.loading, onClick = onRefresh)
+            }
+            HeaderDownloadStatus(state)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(Color(0xFF303656))
             )
-            CatalogHeaderButton(
-                label = "Profil: ${state.networkProfile.label}",
-                contentColor = networkProfileAccent(state.networkProfile),
-                onClick = onSettings,
-                modifier = Modifier.width(170.dp)
-            )
-            CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(84.dp), onClick = onHome)
-            CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(94.dp), onClick = onSettings)
-            CatalogHeaderButton(label = "Recharger", modifier = Modifier.width(108.dp), enabled = !state.loading, onClick = onRefresh)
-        }
-        HeaderDownloadStatus(state)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Mode.entries.forEachIndexed { index, mode ->
-                TvChip(
-                    label = mode.label,
-                    selected = state.mode == mode,
-                    modifier = if (index == 1) Modifier.focusRequester(firstFocus) else Modifier,
-                    onClick = { onMode(mode) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Mode.entries.forEachIndexed { index, mode ->
+                    TvChip(
+                        label = mode.label,
+                        selected = state.mode == mode,
+                        modifier = if (index == 1) Modifier.focusRequester(firstFocus) else Modifier,
+                        onClick = { onMode(mode) }
+                    )
+                }
+                TvSearchButton(
+                    query = state.query,
+                    modifier = Modifier.width(300.dp),
+                    onClick = { searchDialogVisible = true }
                 )
             }
-            TvSearchButton(
-                query = state.query,
-                modifier = Modifier.width(300.dp),
-                onClick = { searchDialogVisible = true }
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    item {
+                        TvChip(selected = state.filter4k, onClick = onToggleFilter4k, label = "4K")
+                    }
+                    item {
+                        TvChip(selected = state.filterHighRating, onClick = onToggleFilterHighRating, label = "Note 7+")
+                    }
+                    item {
+                        TvChip(selected = state.filterRecentYear, onClick = onToggleFilterRecentYear, label = "Année récente")
+                    }
+                    items(CatalogSort.entries, key = { sort -> sort.name }) { sort ->
+                        TvChip(
+                            selected = state.catalogSort == sort,
+                            onClick = { onCatalogSort(sort) },
+                            label = "Tri ${sort.label}"
+                        )
+                    }
+                }
+                Text(
+                    state.status,
+                    color = Color(0xFFC9C6E4),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 190.dp)
+                )
+            }
         }
         if (searchDialogVisible) {
             SearchDialog(
@@ -1611,95 +1658,74 @@ private fun CatalogScreen(
                 onDismiss = { searchDialogVisible = false }
             )
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                item {
-                    TvChip(selected = state.filter4k, onClick = onToggleFilter4k, label = "4K")
-                }
-                item {
-                    TvChip(selected = state.filterHighRating, onClick = onToggleFilterHighRating, label = "Note 7+")
-                }
-                item {
-                    TvChip(selected = state.filterRecentYear, onClick = onToggleFilterRecentYear, label = "Année récente")
-                }
-                items(CatalogSort.entries, key = { sort -> sort.name }) { sort ->
-                    TvChip(
-                        selected = state.catalogSort == sort,
-                        onClick = { onCatalogSort(sort) },
-                        label = "Tri ${sort.label}"
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(top = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            state.error?.let { error ->
+                Text(error, color = Color(0xFFFFB4AB), style = MaterialTheme.typography.bodyMedium)
+            }
+            if (state.mode == Mode.DOWNLOADS) {
+                StoragePanel(state, onClearImageCache)
+            }
+            if (state.loading) {
+                CatalogSkeleton(Modifier.weight(1f))
+            } else {
+                val rows = remember(
+                    state.rows,
+                    state.query,
+                    state.filter4k,
+                    state.filterHighRating,
+                    state.filterRecentYear,
+                    state.catalogSort
+                ) {
+                    filteredRows(
+                        rows = state.rows,
+                        query = state.query,
+                        filter4k = state.filter4k,
+                        filterHighRating = state.filterHighRating,
+                        filterRecentYear = state.filterRecentYear,
+                        sort = state.catalogSort
                     )
                 }
-            }
-            Text(
-                state.status,
-                color = Color(0xFFC9C6E4),
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 190.dp)
-            )
-        }
-        state.error?.let { error ->
-            Text(error, color = Color(0xFFFFB4AB), style = MaterialTheme.typography.bodyMedium)
-        }
-        if (state.mode == Mode.DOWNLOADS) {
-            StoragePanel(state, onClearImageCache)
-        }
-        if (state.loading) {
-            CatalogSkeleton()
-        } else {
-            val rows = remember(
-                state.rows,
-                state.query,
-                state.filter4k,
-                state.filterHighRating,
-                state.filterRecentYear,
-                state.catalogSort
-            ) {
-                filteredRows(
-                    rows = state.rows,
-                    query = state.query,
-                    filter4k = state.filter4k,
-                    filterHighRating = state.filterHighRating,
-                    filterRecentYear = state.filterRecentYear,
-                    sort = state.catalogSort
-                )
-            }
-            if (rows.isEmpty()) {
-                PremiumEmptyState(
-                    title = if (state.query.isBlank()) "Aucun contenu" else "Aucun résultat",
-                    subtitle = emptyStateSubtitle(state),
-                    primaryAction = if (state.query.isBlank()) "Recharger" else "Effacer",
-                    onPrimaryAction = {
-                        if (state.query.isBlank()) onRefresh() else onSearch("")
-                    }
-                )
-            } else {
-                LazyColumn(
-                    state = listState,
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                    contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 18.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    items(
-                        rows,
-                        key = { row -> row.title },
-                        contentType = { "catalog-row" }
-                    ) { row ->
-                        val rowState = rowListStates.getOrPut(row.title) { LazyListState() }
-                        ContentRow(
-                            row = row,
-                            mode = state.mode,
-                            favoriteKeys = state.favoriteKeys,
-                            rowState = rowState,
-                            restoreItemKey = restoreItemKey,
-                            onRestoreConsumed = onRestoreConsumed,
-                            onOpenItem = onOpenItem,
-                            onToggleFavorite = onToggleFavorite
-                        )
+                if (rows.isEmpty()) {
+                    PremiumEmptyState(
+                        title = if (state.query.isBlank()) "Aucun contenu" else "Aucun résultat",
+                        subtitle = emptyStateSubtitle(state),
+                        primaryAction = if (state.query.isBlank()) "Recharger" else "Effacer",
+                        onPrimaryAction = {
+                            if (state.query.isBlank()) onRefresh() else onSearch("")
+                        }
+                    )
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 18.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
+                        items(
+                            rows,
+                            key = { row -> row.title },
+                            contentType = { "catalog-row" }
+                        ) { row ->
+                            val rowState = rowListStates.getOrPut(row.title) { LazyListState() }
+                            ContentRow(
+                                row = row,
+                                mode = state.mode,
+                                favoriteKeys = state.favoriteKeys,
+                                rowState = rowState,
+                                restoreItemKey = restoreItemKey,
+                                onRestoreConsumed = onRestoreConsumed,
+                                onOpenItem = onOpenItem,
+                                onToggleFavorite = onToggleFavorite
+                            )
+                        }
                     }
                 }
             }
@@ -1828,11 +1854,11 @@ private fun PremiumEmptyState(
 }
 
 @Composable
-private fun CatalogSkeleton() {
+private fun CatalogSkeleton(modifier: Modifier = Modifier) {
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(18.dp),
         contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 22.dp),
-        modifier = Modifier.fillMaxSize()
+        modifier = modifier.fillMaxSize()
     ) {
         items(4, key = { index -> "skeleton-$index" }) { rowIndex ->
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

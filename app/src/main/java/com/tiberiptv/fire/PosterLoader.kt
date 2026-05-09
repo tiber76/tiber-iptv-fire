@@ -51,19 +51,25 @@ class PosterLoader(context: Context) {
 
         target.setImageDrawable(null)
         target.setBackgroundColor(placeholderColor)
-        executor.execute {
-            var bitmap = readFromDisk(key)
-            if (bitmap == null) {
-                bitmap = fetch(key)
-                if (bitmap != null) {
-                    writeToDisk(key, bitmap)
-                }
-            }
-            bitmap?.let { finalBitmap ->
-                memoryCache.put(key, finalBitmap)
+        diskExecutor.execute {
+            readFromDisk(key)?.let { diskBitmap ->
+                memoryCache.put(key, diskBitmap)
                 main.post {
                     if (key == target.tag) {
-                        target.setImageBitmap(finalBitmap)
+                        target.setImageBitmap(diskBitmap)
+                    }
+                }
+                return@execute
+            }
+
+            networkExecutor.execute {
+                fetch(key)?.let { fetchedBitmap ->
+                    memoryCache.put(key, fetchedBitmap)
+                    writeToDisk(key, fetchedBitmap)
+                    main.post {
+                        if (key == target.tag) {
+                            target.setImageBitmap(fetchedBitmap)
+                        }
                     }
                 }
             }
@@ -121,12 +127,13 @@ class PosterLoader(context: Context) {
     }
 
     private companion object {
-        private const val MAX_IMAGE_WIDTH = 900
-        private const val MAX_IMAGE_HEIGHT = 1350
+        private const val MAX_IMAGE_WIDTH = 640
+        private const val MAX_IMAGE_HEIGHT = 960
         private const val JPEG_CACHE_QUALITY = 95
         private const val POSTER_GUARD_TIMEOUT_MS = 18_000L
         private const val POSTER_GUARD_RETRY_MS = 180L
-        private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+        private val diskExecutor: ExecutorService = Executors.newFixedThreadPool(2)
+        private val networkExecutor: ExecutorService = Executors.newSingleThreadExecutor()
         private val memoryCache: LruCache<String, Bitmap> =
             object : LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 10L).toInt()) {
                 override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount

@@ -866,7 +866,7 @@ private fun AccountCard(
     onSelect: () -> Unit,
     onRemove: () -> Unit
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(14.dp)
     var focused by remember { mutableStateOf(false) }
     val focusScale by animateFloatAsState(
         targetValue = if (focused) 1.025f else 1f,
@@ -1015,7 +1015,7 @@ private fun HomeProfileButton(
 ) {
     val accent = networkProfileAccent(profile)
     var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(14.dp)
     val focusScale by animateFloatAsState(
         targetValue = if (focused) 1.025f else 1f,
         label = "homeProfileFocusScale"
@@ -1084,7 +1084,7 @@ private fun PrimaryModeButton(
     onRefresh: () -> Unit,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(14.dp)
     var focused by remember { mutableStateOf(false) }
     val openInteractionSource = remember { MutableInteractionSource() }
     val focusScale by animateFloatAsState(
@@ -1133,7 +1133,7 @@ private fun PrimaryModeButton(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(14.dp))
                         .onFocusChanged { focused = it.isFocused }
                         .clickable(
                             interactionSource = openInteractionSource,
@@ -1177,12 +1177,6 @@ private fun PrimaryModeButton(
                         accent = accent,
                         onClick = onRefresh
                     )
-                    Text(
-                        text = "OK",
-                        color = if (focused) TvFocusColor else Color(0xFF72799E),
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold
-                    )
                 }
             }
         }
@@ -1200,7 +1194,7 @@ private fun CompactModeButton(
     onRefresh: () -> Unit,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(14.dp)
     var focused by remember { mutableStateOf(false) }
     val openInteractionSource = remember { MutableInteractionSource() }
     val focusScale by animateFloatAsState(
@@ -1246,7 +1240,7 @@ private fun CompactModeButton(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(14.dp))
                     .onFocusChanged { focused = it.isFocused }
                     .clickable(
                         interactionSource = openInteractionSource,
@@ -1338,7 +1332,7 @@ private fun SecondaryHomeButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(14.dp)
     var focused by remember { mutableStateOf(false) }
     val focusScale by animateFloatAsState(
         targetValue = if (focused) 1.025f else 1f,

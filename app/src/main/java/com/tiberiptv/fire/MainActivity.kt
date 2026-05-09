@@ -286,7 +286,7 @@ enum class NetworkProfile(
         "Réglage équilibré pour une connexion stable."
     ),
     VPN_UNSTABLE(
-        "VPN / instable",
+        "VPN / Connexion instable",
         12_000,
         "m3u8",
         250L * 1024L * 1024L,

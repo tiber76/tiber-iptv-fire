@@ -2523,7 +2523,7 @@ private fun PreloadOnlyActions(
             when {
                 state.preloadConverting -> "Conversion en téléchargement"
                 ready -> "$modeLabel prêt"
-                else -> "$modeLabel en cours"
+                else -> "Pré-chargement du film en cours"
             },
             color = Color.White,
             fontWeight = FontWeight.Bold

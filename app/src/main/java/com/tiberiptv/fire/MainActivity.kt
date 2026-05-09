@@ -1767,6 +1767,9 @@ private fun CatalogScreen(
                         onClick = { onMode(mode) }
                     )
                 }
+                item("catalog-tools-separator") {
+                    CatalogControlSeparator()
+                }
                 item("search") {
                     TvSearchButton(
                         query = state.query,
@@ -3247,6 +3250,23 @@ private fun StorageMetricRow(label: String, bytes: Long) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = Color(0xFFC9C6E4), modifier = Modifier.weight(1f))
         Text(formatBytes(bytes.coerceAtLeast(0L)), color = Color.White, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun CatalogControlSeparator() {
+    Box(
+        modifier = Modifier
+            .height(30.dp)
+            .padding(horizontal = 5.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .height(20.dp)
+                .background(Color(0xFF3A4065))
+        )
     }
 }
 

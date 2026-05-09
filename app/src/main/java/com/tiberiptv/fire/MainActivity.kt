@@ -258,6 +258,8 @@ private val TvFocusOutline = Color(0xFF8FA2FF)
 private val TvFocusSurface = Color(0xFF242842)
 private const val TOP_RATED_MONTH_SECONDS = 31L * 24L * 60L * 60L
 private const val TOP_RATED_SIX_MONTHS_SECONDS = 183L * 24L * 60L * 60L
+private const val BUFFER_LONG_AHEAD_BYTES = 1536L * 1024L * 1024L
+private const val BUFFER_COMPLETE_AHEAD_BYTES = Long.MAX_VALUE / 4L
 
 private object ViewModelHolder {
     var current: MainViewModel? = null
@@ -277,6 +279,12 @@ enum class CatalogSort(val label: String) {
     ALPHA("A-Z")
 }
 
+enum class PreloadMode(val label: String) {
+    NORMAL("Tamponner"),
+    LONG("Tampon long"),
+    COMPLETE("Tampon complet")
+}
+
 enum class NetworkProfile(
     val label: String,
     val bufferMs: Int,
@@ -290,7 +298,7 @@ enum class NetworkProfile(
         6_000,
         "ts",
         160L * 1024L * 1024L,
-        384L * 1024L * 1024L,
+        512L * 1024L * 1024L,
         "Réglage équilibré pour une connexion stable."
     ),
     VPN_UNSTABLE(
@@ -298,7 +306,7 @@ enum class NetworkProfile(
         12_000,
         "m3u8",
         250L * 1024L * 1024L,
-        512L * 1024L * 1024L,
+        BUFFER_LONG_AHEAD_BYTES,
         "Tampon long avant lecture et live M3U8 pour les routes réseau variables."
     ),
     SLOW(
@@ -306,7 +314,7 @@ enum class NetworkProfile(
         20_000,
         "m3u8",
         120L * 1024L * 1024L,
-        256L * 1024L * 1024L,
+        BUFFER_LONG_AHEAD_BYTES,
         "Démarrage plus patient avec buffer lecteur élevé."
     );
 
@@ -343,6 +351,9 @@ data class MainUiState(
     val preloadingItem: XtreamModels.StreamItem? = null,
     val preloadBytes: Long = 0L,
     val preloadTotal: Long = -1L,
+    val preloadReadyBytes: Long = 0L,
+    val preloadAheadBytes: Long = 0L,
+    val preloadModeLabel: String = "",
     val preloadCancelling: Boolean = false,
     val preloadConverting: Boolean = false,
     val settingsVisible: Boolean = false,
@@ -733,7 +744,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return PlaybackRequest(url, fallback, RemoteLabels.PLAYBACK)
     }
 
-    fun startPreload(item: XtreamModels.StreamItem) {
+    fun startPreload(item: XtreamModels.StreamItem, preloadMode: PreloadMode = PreloadMode.NORMAL) {
         val api = api ?: return
         cleanupBufferedPlaybackIfIdle()
         if (item.type == XtreamModels.StreamItem.TYPE_SERIES) {
@@ -742,7 +753,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val profile = stateStore.networkProfile()
         val storage = storageInfo()
-        if (storage.availableBytes in 0 until profile.preloadReadyBytes + StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES) {
+        val preloadReadyBytes = profile.preloadReadyBytes
+        val preloadAheadBytes = preloadAheadBytesFor(profile, preloadMode, storage.availableBytes)
+        if (preloadAheadBytes < preloadReadyBytes ||
+            storage.availableBytes in 0 until preloadReadyBytes + StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES
+        ) {
             _uiState.update {
                 it.withStorage(storage).copy(
                     error = "Stockage trop bas pour tamponner: ${formatBytes(storage.availableBytes)} libres."
@@ -769,11 +784,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 preloadingItem = item,
                 preloadBytes = 0L,
                 preloadTotal = -1L,
+                preloadReadyBytes = preloadReadyBytes,
+                preloadAheadBytes = preloadAheadBytes,
+                preloadModeLabel = preloadMode.label,
                 preloadCancelling = false,
                 preloadConverting = false,
                 selectedItem = item,
                 error = null,
-                status = "Tampon ${item.title}"
+                status = "${preloadMode.label} ${item.title}"
             )
         }
         preloadJob = viewModelScope.launch {
@@ -783,7 +801,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val startedAt = System.currentTimeMillis()
                 val url = api.streamUrl(item, if (item.type == XtreamModels.StreamItem.TYPE_LIVE) stateStore.liveFormat() else null)
                 session = withContext(Dispatchers.IO) {
-                    PreloadStreamServer.start(appContext, url, profile.preloadAheadBytes)
+                    PreloadStreamServer.start(appContext, url, preloadAheadBytes)
                 }
                 activePreloadSession = session
                 activePreloadItem = item
@@ -806,10 +824,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             preloadingItem = item,
                             preloadBytes = downloaded,
                             preloadTotal = total,
+                            preloadReadyBytes = preloadReadyBytes,
+                            preloadAheadBytes = preloadAheadBytes,
+                            preloadModeLabel = preloadMode.label,
                             status = status
                         )
                     }
-                    if (downloaded >= profile.preloadReadyBytes || (downloaded > 0L && !session.isActive())) {
+                    if (downloaded >= preloadReadyBytes || (downloaded > 0L && !session.isActive())) {
                         break
                     }
                     delay(500L)
@@ -826,6 +847,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         preloadingItem = item,
                         preloadBytes = session.downloadedBytes(),
                         preloadTotal = session.totalBytes(),
+                        preloadReadyBytes = preloadReadyBytes,
+                        preloadAheadBytes = preloadAheadBytes,
+                        preloadModeLabel = preloadMode.label,
                         preloadCancelling = false,
                         preloadConverting = false,
                         status = "Tampon prêt"
@@ -1004,6 +1028,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
+    }
+
+    private fun preloadAheadBytesFor(
+        profile: NetworkProfile,
+        preloadMode: PreloadMode,
+        availableBytes: Long
+    ): Long {
+        val requested = when (preloadMode) {
+            PreloadMode.NORMAL -> profile.preloadAheadBytes
+            PreloadMode.LONG -> max(profile.preloadAheadBytes, BUFFER_LONG_AHEAD_BYTES)
+            PreloadMode.COMPLETE -> BUFFER_COMPLETE_AHEAD_BYTES
+        }
+        val storageBound = if (availableBytes > StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES) {
+            availableBytes - StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES
+        } else {
+            0L
+        }
+        return min(requested, storageBound)
     }
 
     fun startDownload(item: XtreamModels.StreamItem) {
@@ -1300,12 +1342,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .take(20)
 
         return buildList {
+            addPremiumRow(PremiumRowKind.RECENT, "Ajoutés récemment", recent)
             addPremiumRow(PremiumRowKind.HISTORY, "Continuer à regarder", history)
             addPremiumRow(PremiumRowKind.FAVORITES, "Mes favoris", favorites)
             addPremiumRow(PremiumRowKind.FOUR_K, "Sélection 4K", fourK)
             addPremiumRow(PremiumRowKind.TOP_RATED, "Top notes du mois", topRatedMonth)
             addPremiumRow(PremiumRowKind.TOP_RATED, "Top notes 6 derniers mois", topRatedSixMonths)
-            addPremiumRow(PremiumRowKind.RECENT, "Ajoutés récemment", recent)
         }
     }
 
@@ -1490,7 +1532,7 @@ private fun MainRoute(
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit,
     onPlay: (XtreamModels.StreamItem) -> Unit,
     onPlayFromStart: (XtreamModels.StreamItem) -> Unit,
-    onPreload: (XtreamModels.StreamItem) -> Unit,
+    onPreload: (XtreamModels.StreamItem, PreloadMode) -> Unit,
     onCancelPreload: () -> Unit,
     onConvertPreload: (XtreamModels.StreamItem) -> Unit,
     onTrailer: (String, String) -> Unit,
@@ -2074,7 +2116,7 @@ private fun DetailScreen(
     onBack: () -> Unit,
     onPlay: (XtreamModels.StreamItem) -> Unit,
     onPlayFromStart: (XtreamModels.StreamItem) -> Unit,
-    onPreload: (XtreamModels.StreamItem) -> Unit,
+    onPreload: (XtreamModels.StreamItem, PreloadMode) -> Unit,
     onCancelPreload: () -> Unit,
     onConvertPreload: (XtreamModels.StreamItem) -> Unit,
     onTrailer: (String, String) -> Unit,
@@ -2174,12 +2216,15 @@ private fun DetailScreen(
                         }
                     } else if (item.type != XtreamModels.StreamItem.TYPE_LIVE && item.type != XtreamModels.StreamItem.TYPE_SERIES) {
                         DetailActionGroup(title = "Préchargé") {
-                            DetailActionButton(label = "Tamponner", onClick = { onPreload(item) })
+                            DetailActionButton(label = "Tamponner", onClick = { onPreload(item, PreloadMode.NORMAL) })
+                            DetailActionButton(label = "Tampon long", onClick = { onPreload(item, PreloadMode.LONG) })
+                            DetailActionButton(label = "Tampon complet", onClick = { onPreload(item, PreloadMode.COMPLETE) })
                             DetailActionButton(label = "Télécharger", onClick = { onDownload(item) })
                         }
                     } else if (item.type == XtreamModels.StreamItem.TYPE_LIVE) {
                         DetailActionGroup(title = "Préchargé") {
-                            DetailActionButton(label = "Tamponner", onClick = { onPreload(item) })
+                            DetailActionButton(label = "Tamponner", onClick = { onPreload(item, PreloadMode.NORMAL) })
+                            DetailActionButton(label = "Tampon long", onClick = { onPreload(item, PreloadMode.LONG) })
                         }
                     }
                     if (isDownloaded) {
@@ -2469,13 +2514,16 @@ private fun PreloadOnlyActions(
 ) {
     val total = state.preloadTotal
     val progress = if (total > 0L) (state.preloadBytes.toFloat() / total.toFloat()).coerceIn(0f, 1f) else 0f
-    val ready = state.preloadBytes >= state.networkProfile.preloadReadyBytes
+    val readyBytes = state.preloadReadyBytes.takeIf { it > 0L } ?: state.networkProfile.preloadReadyBytes
+    val aheadBytes = state.preloadAheadBytes.takeIf { it > 0L } ?: state.networkProfile.preloadAheadBytes
+    val ready = state.preloadBytes >= readyBytes
+    val modeLabel = state.preloadModeLabel.ifBlank { "Tampon" }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.widthIn(max = 520.dp)) {
         Text(
             when {
                 state.preloadConverting -> "Conversion en téléchargement"
-                ready -> "Tampon prêt"
-                else -> "Tampon en cours"
+                ready -> "$modeLabel prêt"
+                else -> "$modeLabel en cours"
             },
             color = Color.White,
             fontWeight = FontWeight.Bold
@@ -2483,13 +2531,13 @@ private fun PreloadOnlyActions(
         if (total > 0L) {
             LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
             Text(
-                "${formatBytes(state.preloadBytes)} / objectif ${formatBytes(state.networkProfile.preloadReadyBytes)}",
+                "${formatBytes(state.preloadBytes)} / prêt à ${formatBytes(readyBytes)} / avance cible ${formatPreloadTarget(aheadBytes)}",
                 color = Color.White
             )
         } else {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             Text(
-                "${formatBytes(state.preloadBytes)} en tampon / objectif ${formatBytes(state.networkProfile.preloadReadyBytes)}",
+                "${formatBytes(state.preloadBytes)} en tampon / prêt à ${formatBytes(readyBytes)} / avance cible ${formatPreloadTarget(aheadBytes)}",
                 color = Color.White
             )
         }
@@ -2586,7 +2634,7 @@ private fun SettingsScreen(
                 OutlinedButton(onClick = onCycleBuffer) { Text("Changer") }
             }
             Text(
-                "Tampon: lecture après ${formatBytes(state.networkProfile.preloadReadyBytes)}, avance max ${formatBytes(state.networkProfile.preloadAheadBytes)}",
+                "Tampon: lecture après ${formatBytes(state.networkProfile.preloadReadyBytes)}, avance profil ${formatPreloadTarget(state.networkProfile.preloadAheadBytes)}",
                 color = Color(0xFFC9C6E4),
                 style = MaterialTheme.typography.bodySmall
             )
@@ -3369,6 +3417,9 @@ private fun formatBytes(bytes: Long): String {
     }
     return String.format(Locale.FRANCE, "%.2f %s", value, units[index])
 }
+
+private fun formatPreloadTarget(bytes: Long): String =
+    if (bytes >= BUFFER_COMPLETE_AHEAD_BYTES / 2L) "complet temporaire" else formatBytes(bytes)
 
 private fun formatSpeed(bytesPerSecond: Long): String {
     if (bytesPerSecond <= 0L) return "vitesse en cours"

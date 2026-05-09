@@ -889,10 +889,6 @@ class PlayerActivity : Activity() {
         keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_LEFT
 
     private fun handleDpadSeek(direction: Int, event: KeyEvent) {
-        if (!canSeekWithKnownDuration()) {
-            showSeekUnavailable()
-            return
-        }
         val currentPlayer = player ?: return
         val length = currentPlayer.length
         if (length <= 0L) {
@@ -909,10 +905,22 @@ class PlayerActivity : Activity() {
             val heldMs = SystemClock.uptimeMillis() - scrubStartedAtMs
             scrubTargetTimeMs = clampSeekTarget(scrubTargetTimeMs + repeatedSeekStep(direction, heldMs), length)
         }
+        var blockedByBuffer = false
+        if (!canSeekToTime(scrubTargetTimeMs, length)) {
+            val safeLimit = safeBufferedPositionMs(length)
+            if (direction > 0 && safeLimit > currentPlayer.time) {
+                scrubTargetTimeMs = clampSeekTarget(safeLimit, length)
+                blockedByBuffer = true
+            } else {
+                showSeekUnavailable()
+                return
+            }
+        }
         userSeeking = true
         seekBar.progress = max(0L, min(1_000L, scrubTargetTimeMs * 1_000L / length)).toInt()
         updateTimeLabel(seekBar.progress)
-        showSeekOverlay(seekLabel(scrubTargetTimeMs - scrubStartTimeMs), scrubTargetTimeMs, length, hold = event.repeatCount > 0)
+        val label = if (blockedByBuffer) "Hors tampon disponible" else seekLabel(scrubTargetTimeMs - scrubStartTimeMs)
+        showSeekOverlay(label, scrubTargetTimeMs, length, hold = event.repeatCount > 0)
     }
 
     private fun commitScrubSeek() {
@@ -922,7 +930,7 @@ class PlayerActivity : Activity() {
         scrubActive = false
         scrubDirection = 0
         userSeeking = false
-        if (!canSeekWithKnownDuration()) {
+        if (!canSeekToTime(target, length)) {
             updateProgress()
             showSeekUnavailable()
             return
@@ -939,14 +947,18 @@ class PlayerActivity : Activity() {
     }
 
     private fun seekBy(deltaMs: Long, label: String = seekLabel(deltaMs)) {
-        if (!canSeekWithKnownDuration()) {
+        val currentPlayer = player ?: return
+        val length = currentPlayer.length
+        if (length <= 0L) {
             showSeekUnavailable()
             return
         }
-        val currentPlayer = player ?: return
-        val length = currentPlayer.length
         val currentTime = currentPlayer.time
         val target = clampSeekTarget(currentTime + deltaMs, length)
+        if (!canSeekToTime(target, length)) {
+            showSeekUnavailable()
+            return
+        }
         currentPlayer.time = target
         updateProgress()
         timeView.text = "${formatTime(target)} / ${formatTime(length)}"
@@ -991,14 +1003,15 @@ class PlayerActivity : Activity() {
     }
 
     private fun seekToFraction(fraction: Float) {
-        if (!canSeekPlayback()) {
-            showSeekUnavailable()
-            return
-        }
         val currentPlayer = player ?: return
         val length = currentPlayer.length
         if (length > 0L) {
-            currentPlayer.time = (length * max(0f, min(1f, fraction))).roundToInt().toLong()
+            val target = (length * max(0f, min(1f, fraction))).roundToInt().toLong()
+            if (canSeekToTime(target, length)) {
+                currentPlayer.time = target
+            } else {
+                showSeekUnavailable()
+            }
         }
     }
 
@@ -1024,14 +1037,39 @@ class PlayerActivity : Activity() {
     }
 
     private fun canSeekPlayback(): Boolean =
-        !preloadProxy || PreloadStreamServer.isComplete()
+        !preloadProxy ||
+            PreloadStreamServer.isComplete() ||
+            PreloadStreamServer.status().let { it.totalBytes > 0L && it.safeSeekBytes > 0L }
 
-    private fun canSeekWithKnownDuration(): Boolean =
-        canSeekPlayback() && (player?.length ?: 0L) > 0L
+    private fun canSeekToTime(targetMs: Long, lengthMs: Long): Boolean {
+        if (lengthMs <= 0L) {
+            return false
+        }
+        if (!preloadProxy) {
+            return true
+        }
+        val status = PreloadStreamServer.status()
+        if (status.complete) {
+            return true
+        }
+        if (status.totalBytes <= 0L || status.safeSeekBytes <= 0L) {
+            return false
+        }
+        val targetBytes = targetMs * status.totalBytes / lengthMs
+        return targetBytes <= status.safeSeekBytes
+    }
+
+    private fun safeBufferedPositionMs(lengthMs: Long): Long {
+        val status = PreloadStreamServer.status()
+        if (lengthMs <= 0L || status.totalBytes <= 0L || status.safeSeekBytes <= 0L) {
+            return 0L
+        }
+        return max(0L, min(lengthMs, status.safeSeekBytes * lengthMs / status.totalBytes))
+    }
 
     private fun showSeekUnavailable() {
         val reason = when {
-            preloadProxy && !PreloadStreamServer.isComplete() -> "Seek désactivé: tampon incomplet"
+            preloadProxy && !PreloadStreamServer.isComplete() -> "Position hors tampon disponible"
             (player?.length ?: 0L) <= 0L -> "Avance non disponible sur le direct"
             else -> "Avance non disponible"
         }
@@ -1060,11 +1098,17 @@ class PlayerActivity : Activity() {
             status.errorMessage != null ->
                 "Tampon: erreur ${status.errorMessage}"
             status.complete ->
-                "Tampon complet: déplacement dans le film activé"
+                "Tampon complet - navigation libre"
             status.convertingToDownload ->
                 "Conversion en téléchargement: ${formatBytes(status.downloadedBytes)}${totalSuffix(status.totalBytes)}"
-            else ->
-                "Tampon: ${formatBytes(status.aheadBytes)} d'avance - seek désactivé tant que le fichier est incomplet"
+            else -> {
+                val safePosition = safeBufferedPositionMs(player?.length ?: 0L)
+                if (safePosition > 0L) {
+                    "Tampon: ${formatBytes(status.aheadBytes)} d'avance - seek disponible jusqu'à ${formatTime(safePosition)}"
+                } else {
+                    "Tampon: ${formatBytes(status.aheadBytes)} d'avance - navigation limitée"
+                }
+            }
         }
         when {
             status.errorMessage != null -> updateQualitySummary("Erreur tampon", QualityState.ERROR)
@@ -1075,7 +1119,7 @@ class PlayerActivity : Activity() {
             playerHintView.text = if (status.complete) {
                 playerHintText()
             } else {
-                "OK pause/lecture • ↑ boutons • ↓ barre • seek après tampon complet"
+                "OK pause/lecture • ←/→ dans la zone tamponnée • hors zone bloqué"
             }
         }
     }

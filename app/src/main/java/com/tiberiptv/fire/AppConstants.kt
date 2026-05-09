@@ -24,6 +24,7 @@ internal object StoragePolicy {
     const val DOWNLOAD_SPACE_MARGIN_BYTES = 768L * 1024L * 1024L
     const val DOWNLOAD_STORAGE_CHECK_INTERVAL_BYTES = 16L * 1024L * 1024L
     const val PRELOAD_TIMEOUT_MS = 10L * 60L * 1000L
+    const val BUFFER_SEEK_SAFETY_BYTES = 48L * 1024L * 1024L
 }
 
 internal object PlaybackPolicy {

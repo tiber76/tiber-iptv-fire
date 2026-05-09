@@ -29,6 +29,7 @@ object PreloadStreamServer {
         val downloadedBytes: Long = 0L,
         val servedBytes: Long = 0L,
         val aheadBytes: Long = 0L,
+        val safeSeekBytes: Long = 0L,
         val totalBytes: Long = -1L,
         val convertingToDownload: Boolean = false,
         val errorMessage: String? = null
@@ -162,6 +163,7 @@ object PreloadStreamServer {
                 downloadedBytes = downloadedBytes,
                 servedBytes = servedBytes,
                 aheadBytes = max(0L, downloadedBytes - servedBytes),
+                safeSeekBytes = safeSeekBytes(),
                 totalBytes = totalBytes,
                 convertingToDownload = unlimitedAhead,
                 errorMessage = error?.message
@@ -253,6 +255,9 @@ object PreloadStreamServer {
                             if (read == -1) {
                                 break
                             }
+                            if ((cacheFile.parentFile?.usableSpace ?: Long.MAX_VALUE) < StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES) {
+                                throw IllegalStateException("Stockage presque plein.")
+                            }
                             output.write(buffer, 0, read)
                             output.flush()
                             synchronized(lock) {
@@ -318,7 +323,11 @@ object PreloadStreamServer {
                                     offset = parseRangeStart(lower)
                                 }
                             }
-                            val rangeAllowed = rangeRequested && canServeRange()
+                            val rangeAllowed = rangeRequested && canServeRange(offset)
+                            if (rangeRequested && !rangeAllowed) {
+                                writeRangeUnavailable(output)
+                                return
+                            }
                             val serveOffset = if (rangeAllowed) offset else 0L
                             writeHeaders(output, serveOffset, rangeAllowed)
                             if (!headRequest) {
@@ -345,13 +354,17 @@ object PreloadStreamServer {
             }
         }
 
-        private fun canServeRange(): Boolean = complete && totalBytes > 0L
+        private fun canServeRange(offset: Long): Boolean =
+            (totalBytes <= 0L || offset < totalBytes) && (complete || offset <= safeSeekBytes())
+
+        private fun safeSeekBytes(): Long =
+            max(0L, downloadedBytes - StoragePolicy.BUFFER_SEEK_SAFETY_BYTES)
 
         @Throws(Exception::class)
         private fun writeHeaders(output: OutputStream, offset: Long, rangeRequested: Boolean) {
             val total = totalBytes
             val headers = StringBuilder()
-            if (rangeRequested && complete && total > 0L) {
+            if (rangeRequested && total > 0L) {
                 headers.append("HTTP/1.1 206 Partial Content\r\n")
                 headers.append("Content-Range: bytes ")
                     .append(offset)
@@ -365,11 +378,24 @@ object PreloadStreamServer {
             }
             headers.append("Content-Type: ").append(contentType()).append("\r\n")
                 .append("Connection: close\r\n")
-            if (complete && total > 0L) {
+            if ((complete || safeSeekBytes() > 0L) && total > 0L) {
                 headers.append("Accept-Ranges: bytes\r\n")
             }
             if (complete && total > 0L && offset < total) {
                 headers.append("Content-Length: ").append(total - offset).append("\r\n")
+            }
+            headers.append("\r\n")
+            output.write(headers.toString().toByteArray())
+            output.flush()
+        }
+
+        @Throws(Exception::class)
+        private fun writeRangeUnavailable(output: OutputStream) {
+            val headers = StringBuilder()
+                .append("HTTP/1.1 416 Range Not Satisfiable\r\n")
+                .append("Connection: close\r\n")
+            if (totalBytes > 0L) {
+                headers.append("Content-Range: bytes */").append(totalBytes).append("\r\n")
             }
             headers.append("\r\n")
             output.write(headers.toString().toByteArray())

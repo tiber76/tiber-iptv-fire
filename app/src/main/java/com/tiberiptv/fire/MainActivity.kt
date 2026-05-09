@@ -1665,14 +1665,16 @@ private fun CatalogScreen(
         verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
         var searchDialogVisible by remember { mutableStateOf(false) }
+        var filtersExpanded by remember { mutableStateOf(false) }
+        val activeFilterCount = activeCatalogFilterCount(state)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(14.dp))
                 .background(Color(0xB0161830))
                 .border(1.dp, Color(0xFF303656), RoundedCornerShape(14.dp))
-                .padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
@@ -1682,23 +1684,25 @@ private fun CatalogScreen(
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
                 )
+                Text(
+                    state.status,
+                    color = Color(0xFFC9C6E4),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 180.dp)
+                )
                 CatalogHeaderButton(
                     label = "Profil: ${state.networkProfile.label}",
                     contentColor = networkProfileAccent(state.networkProfile),
                     onClick = onSettings,
-                    modifier = Modifier.width(170.dp)
+                    modifier = Modifier.width(198.dp)
                 )
-                CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(84.dp), onClick = onHome)
-                CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(94.dp), onClick = onSettings)
+                CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(78.dp), onClick = onHome)
                 CatalogHeaderButton(label = "Recharger", modifier = Modifier.width(108.dp), enabled = !state.loading, onClick = onRefresh)
+                CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(88.dp), onClick = onSettings)
             }
             HeaderDownloadStatus(state)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(Color(0xFF303656))
-            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Mode.entries.forEachIndexed { index, mode ->
                     TvChip(
@@ -1708,16 +1712,27 @@ private fun CatalogScreen(
                         onClick = { onMode(mode) }
                     )
                 }
+                Spacer(Modifier.weight(1f))
                 TvSearchButton(
                     query = state.query,
-                    modifier = Modifier.width(300.dp),
+                    modifier = Modifier.width(214.dp),
                     onClick = { searchDialogVisible = true }
                 )
+                TvChip(
+                    selected = filtersExpanded || activeFilterCount > 0,
+                    onClick = { filtersExpanded = !filtersExpanded },
+                    label = if (activeFilterCount > 0) "Filtres $activeFilterCount" else "Filtres"
+                )
+                TvChip(
+                    selected = state.catalogSort != CatalogSort.RECENT,
+                    onClick = { onCatalogSort(state.catalogSort.next()) },
+                    label = "Tri ${state.catalogSort.label}"
+                )
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (filtersExpanded) {
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     item {
                         TvChip(selected = state.filter4k, onClick = onToggleFilter4k, label = "4K")
@@ -1736,14 +1751,6 @@ private fun CatalogScreen(
                         )
                     }
                 }
-                Text(
-                    state.status,
-                    color = Color(0xFFC9C6E4),
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 190.dp)
-                )
             }
         }
         if (searchDialogVisible) {
@@ -1826,6 +1833,14 @@ private fun CatalogScreen(
             }
         }
     }
+}
+
+private fun activeCatalogFilterCount(state: MainUiState): Int =
+    listOf(state.filter4k, state.filterHighRating, state.filterRecentYear).count { it }
+
+private fun CatalogSort.next(): CatalogSort {
+    val values = CatalogSort.entries
+    return values[(ordinal + 1) % values.size]
 }
 
 @OptIn(ExperimentalFoundationApi::class)

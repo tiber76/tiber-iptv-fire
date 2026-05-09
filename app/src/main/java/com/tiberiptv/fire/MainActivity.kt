@@ -265,6 +265,8 @@ private const val TOP_RATED_MONTH_SECONDS = 31L * 24L * 60L * 60L
 private const val TOP_RATED_SIX_MONTHS_SECONDS = 183L * 24L * 60L * 60L
 private const val BUFFER_LONG_AHEAD_BYTES = 1536L * 1024L * 1024L
 private const val BUFFER_COMPLETE_AHEAD_BYTES = Long.MAX_VALUE / 4L
+private val RatingFractionRegex = Regex("""(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)""")
+private val RatingNumberRegex = Regex("""\d+(?:\.\d+)?""")
 
 private object ViewModelHolder {
     var current: MainViewModel? = null
@@ -3470,6 +3472,7 @@ private fun filteredRows(
     val clean = query.trim().lowercase(Locale.US)
     val recentYearFloor = Calendar.getInstance().get(Calendar.YEAR) - 1
     return rows.mapNotNull { row ->
+        val isPremiumRow = premiumRowKind(row.title) != null
         val visibleRowTitle = displayRowTitle(row.title)
         val rowMatchesQuery = clean.isEmpty() || visibleRowTitle.lowercase(Locale.US).contains(clean)
         val items = row.items
@@ -3483,7 +3486,9 @@ private fun filteredRows(
                     (!filterHighRating || numericRating(item.rating) >= 7f) &&
                     (!filterRecentYear || item.year.toIntOrNull()?.let { year -> year >= recentYearFloor } == true)
             }
-            .sortedForCatalog(sort)
+            .let { filteredItems ->
+                if (isPremiumRow) filteredItems else filteredItems.sortedForCatalog(sort)
+            }
         if (items.isEmpty()) null else XtreamModels.ContentRow(row.title, items)
     }
 }
@@ -3510,9 +3515,25 @@ private fun List<XtreamModels.StreamItem>.sortedForCatalog(sort: CatalogSort): L
     }
 
 private fun numericRating(value: String?): Float {
-    val normalized = value?.trim()?.replace(',', '.') ?: return 0f
-    val numeric = normalized.toFloatOrNull() ?: return 0f
-    return if (numeric > 10f) numeric / 10f else numeric
+    val normalized = value
+        ?.trim()
+        ?.replace(',', '.')
+        ?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+        ?: return 0f
+    val fractionMatch = RatingFractionRegex.find(normalized)
+    if (fractionMatch != null) {
+        val score = fractionMatch.groupValues[1].toFloatOrNull() ?: return 0f
+        val maxScore = fractionMatch.groupValues[2].toFloatOrNull()?.takeIf { it > 0f } ?: return 0f
+        return (score / maxScore * 10f).coerceIn(0f, 10f)
+    }
+    val numeric = RatingNumberRegex.find(normalized)?.value?.toFloatOrNull() ?: return 0f
+    val scaled = when {
+        "%" in normalized -> numeric / 10f
+        numeric > 100f -> numeric / 100f
+        numeric > 10f -> numeric / 10f
+        else -> numeric
+    }
+    return scaled.coerceIn(0f, 10f)
 }
 
 private fun rowsWithRating(

@@ -777,8 +777,8 @@ private fun HomeHubScreen(
                 onClick = { onOpenMode("FAVORITES") }
             )
             SecondaryHomeButton(
-                label = "Local",
-                subtitle = "Téléchargements",
+                label = "Téléchargés",
+                subtitle = "Films et séries hors ligne",
                 modifier = Modifier.weight(1f),
                 onClick = { onOpenMode("DOWNLOADS") }
             )

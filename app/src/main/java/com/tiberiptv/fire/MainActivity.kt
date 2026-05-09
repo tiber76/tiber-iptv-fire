@@ -270,7 +270,7 @@ enum class Mode(val label: String) {
     MOVIES("Films"),
     SERIES("Séries"),
     FAVORITES("Favoris"),
-    DOWNLOADS("Local")
+    DOWNLOADS("Téléchargés")
 }
 
 enum class CatalogSort(val label: String) {
@@ -503,7 +503,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     settingsVisible = false,
                     loading = false,
                     error = null,
-                    status = "Fichiers locaux"
+                    status = "Mes téléchargements"
                 )
             }
             return
@@ -725,7 +725,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     selectedDownloaded = false,
                     selectedSizeBytes = stateStore.cachedContentLength(item),
                     rows = if (it.mode == Mode.DOWNLOADS) downloadRows() else it.rows,
-                    status = "Fichier local absent, reprise en streaming"
+                    status = "Téléchargement absent, reprise en streaming"
                 )
             }
         }
@@ -766,7 +766,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (localFile(item).isFile) {
-            _uiState.update { it.copy(status = "Déjà disponible en local") }
+            _uiState.update { it.copy(status = "Déjà téléchargé") }
             return
         }
         if (preloadJob?.isActive == true || PreloadStreamServer.isActive()) {
@@ -2333,7 +2333,7 @@ private fun DetailMetaPills(
             DetailMetaPill(genre)
         }
         if (downloaded) {
-            DetailMetaPill("Local", accent = Color(0xFF8FA2FF), foreground = Color(0xFF090B18))
+            DetailMetaPill("Téléchargé", accent = Color(0xFF8FA2FF), foreground = Color(0xFF090B18))
         }
         if (favorite) {
             DetailMetaPill("Favori", accent = Color(0xFFFF5F87), foreground = Color.White)
@@ -2374,7 +2374,7 @@ private fun ContentSizeStatus(
     }
     Text(
         text = if (state.selectedDownloaded) {
-            "Disponible localement - ${formatBytes(state.selectedSizeBytes)}"
+            "Téléchargé - ${formatBytes(state.selectedSizeBytes)}"
         } else {
             "Poids connu: ${formatBytes(state.selectedSizeBytes)}"
         },
@@ -3267,7 +3267,7 @@ private fun emptyStateSubtitle(state: MainUiState): String =
     when {
         state.query.isNotBlank() -> "Aucun titre ne correspond à cette recherche. Efface le filtre pour revenir au catalogue."
         state.mode == Mode.FAVORITES -> "Ajoute un favori avec un clic long sur une miniature, ou depuis la fiche du film."
-        state.mode == Mode.DOWNLOADS -> "Les films téléchargés apparaîtront ici avec leur poids et les actions locales."
+        state.mode == Mode.DOWNLOADS -> "Les films téléchargés apparaîtront ici avec leur poids et les actions hors ligne."
         else -> "Le catalogue peut être vide ou pas encore chargé. Lance une actualisation depuis cette page."
     }
 

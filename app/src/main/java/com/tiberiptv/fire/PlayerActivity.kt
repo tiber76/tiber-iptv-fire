@@ -176,14 +176,14 @@ class PlayerActivity : Activity() {
             setPadding(0, 0, dp(10), 0)
         }
 
-        playPauseButton = controlButton("Pause")
-        val audio = controlButton("Audio")
-        val subtitles = controlButton("Sous-titres")
+        playPauseButton = controlButton(playPauseButtonText(playing = true))
+        val audio = controlButton("♪ Audio")
+        val subtitles = controlButton("CC Sous-titres")
         displayModeButton = controlButton(displayModeButtonText())
-        val info = controlButton("Info")
-        val beginning = controlButton("Début")
-        val retry = controlButton("Retry")
-        val close = controlButton("Retour")
+        val info = controlButton("i Info")
+        val beginning = controlButton("↺ Début")
+        val retry = controlButton("⟳ Relancer")
+        val close = controlButton("← Retour")
         topControlButtons.clear()
         topControlButtons.addAll(listOf(playPauseButton, audio, subtitles, displayModeButton, info, beginning, retry, close))
 
@@ -221,7 +221,7 @@ class PlayerActivity : Activity() {
             typeface = Typeface.DEFAULT_BOLD
             setSingleLine(true)
         }
-        qualityButton = panelButton("Qualité").apply {
+        qualityButton = panelButton(qualityButtonText("Qualité")).apply {
             minWidth = dp(118)
         }
         tamponStatusView = TextView(this).apply {
@@ -551,6 +551,11 @@ class PlayerActivity : Activity() {
 
     private fun displayModeButtonText(): String = "${displayMode.icon} ${displayMode.label}"
 
+    private fun playPauseButtonText(playing: Boolean): String =
+        if (playing) "Ⅱ Pause" else "▶ Lire"
+
+    private fun qualityButtonText(label: String): String = "◇ $label"
+
     private fun handlePlayerEvent(event: MediaPlayer.Event) {
         main.post {
             player ?: return@post
@@ -562,12 +567,12 @@ class PlayerActivity : Activity() {
                     statusView.text = playbackStatus()
                     updateTamponStatus()
                     updateQualitySummary(compactQualityText(), QualityState.GOOD)
-                    playPauseButton.text = "Pause"
+                    playPauseButton.text = playPauseButtonText(playing = true)
                 }
                 MediaPlayer.Event.Paused -> {
                     statusView.text = "Pause"
                     updateQualitySummary("Pause", QualityState.NEUTRAL)
-                    playPauseButton.text = "Lire"
+                    playPauseButton.text = playPauseButtonText(playing = false)
                     showControlsTemporarily()
                 }
                 MediaPlayer.Event.Buffering -> {
@@ -583,7 +588,7 @@ class PlayerActivity : Activity() {
                 MediaPlayer.Event.EndReached -> {
                     statusView.text = "Lecture terminee"
                     updateQualitySummary("Terminé", QualityState.NEUTRAL)
-                    playPauseButton.text = "Lire"
+                    playPauseButton.text = playPauseButtonText(playing = false)
                     setControlsVisible(true)
                     releaseBufferedPlayback()
                     releaseRemoteGuard()
@@ -677,10 +682,10 @@ class PlayerActivity : Activity() {
         val currentPlayer = player ?: return
         if (currentPlayer.isPlaying) {
             currentPlayer.pause()
-            playPauseButton.text = "Lire"
+            playPauseButton.text = playPauseButtonText(playing = false)
         } else {
             currentPlayer.play()
-            playPauseButton.text = "Pause"
+            playPauseButton.text = playPauseButtonText(playing = true)
         }
     }
 
@@ -1301,7 +1306,7 @@ class PlayerActivity : Activity() {
         if (!::qualityButton.isInitialized) {
             return
         }
-        qualityButton.text = label
+        qualityButton.text = qualityButtonText(label)
         val stroke = when (state) {
             QualityState.GOOD -> ACCENT_2
             QualityState.WARNING -> ACCENT_FOCUS

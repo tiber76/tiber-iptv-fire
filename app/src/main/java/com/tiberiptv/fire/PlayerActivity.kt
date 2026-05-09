@@ -36,14 +36,15 @@ import kotlin.math.roundToInt
 
 enum class PlayerDisplayMode(
     val label: String,
+    val icon: String,
     val scaleType: MediaPlayer.ScaleType
 ) {
-    ADAPT("Adapter", MediaPlayer.ScaleType.SURFACE_BEST_FIT),
-    FULL("Plein écran", MediaPlayer.ScaleType.SURFACE_FIT_SCREEN),
-    ZOOM("Zoom", MediaPlayer.ScaleType.SURFACE_FILL),
-    RATIO_16_9("16:9", MediaPlayer.ScaleType.SURFACE_16_9),
-    RATIO_4_3("4:3", MediaPlayer.ScaleType.SURFACE_4_3),
-    ORIGINAL("Original", MediaPlayer.ScaleType.SURFACE_ORIGINAL);
+    ADAPT("Taille auto", "↔", MediaPlayer.ScaleType.SURFACE_BEST_FIT),
+    FULL("Plein écran", "▣", MediaPlayer.ScaleType.SURFACE_FIT_SCREEN),
+    ZOOM("Zoom", "+", MediaPlayer.ScaleType.SURFACE_FILL),
+    RATIO_16_9("16:9", "▭", MediaPlayer.ScaleType.SURFACE_16_9),
+    RATIO_4_3("4:3", "□", MediaPlayer.ScaleType.SURFACE_4_3),
+    ORIGINAL("Original", "1:1", MediaPlayer.ScaleType.SURFACE_ORIGINAL);
 
     fun next(): PlayerDisplayMode {
         val modes = entries
@@ -548,7 +549,7 @@ class PlayerActivity : Activity() {
         }
     }
 
-    private fun displayModeButtonText(): String = displayMode.label
+    private fun displayModeButtonText(): String = "${displayMode.icon} ${displayMode.label}"
 
     private fun handlePlayerEvent(event: MediaPlayer.Event) {
         main.post {

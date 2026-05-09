@@ -306,7 +306,7 @@ class PlayerActivity : Activity() {
         playPauseButton.setOnClickListener { togglePlayPause() }
         audio.setOnClickListener { showTrackDialog(true) }
         subtitles.setOnClickListener { showTrackDialog(false) }
-        displayModeButton.setOnClickListener { cycleDisplayMode() }
+        displayModeButton.setOnClickListener { showDisplayModeDialog() }
         info.setOnClickListener { showInfoDialog() }
         qualityButton.setOnClickListener { showQualityPanel() }
         beginning.setOnClickListener { playFromBeginning() }
@@ -703,57 +703,96 @@ class PlayerActivity : Activity() {
             choices.add(track)
         }
 
+        showPlayerChoiceDialog(
+            title = if (audio) "Audio" else "Sous-titres",
+            choices = choices,
+            selectedIndex = choices.indexOfFirst { it.id == selected }.coerceAtLeast(0),
+            label = { choice -> trackChoiceLabel(choice, audio) },
+            onSelect = { choice ->
+                val ok = if (audio) currentPlayer.setAudioTrack(choice.id) else currentPlayer.setSpuTrack(choice.id)
+                statusView.text = if (ok) playbackStatus() else "Sélection impossible"
+            }
+        )
+    }
+
+    private fun showDisplayModeDialog() {
+        showPlayerChoiceDialog(
+            title = "Taille",
+            choices = PlayerDisplayMode.entries.toList(),
+            selectedIndex = displayMode.ordinal,
+            label = { mode -> "${mode.icon}  ${mode.label}" },
+            onSelect = { mode ->
+                displayMode = mode
+                stateStore.setPlayerDisplayMode(displayMode)
+                applyDisplayMode(true)
+                showControlsTemporarily()
+            }
+        )
+    }
+
+    private fun <T> showPlayerChoiceDialog(
+        title: String,
+        choices: List<T>,
+        selectedIndex: Int,
+        label: (T) -> String,
+        onSelect: (T) -> Unit
+    ) {
         val dialog = android.app.Dialog(this)
+        dialog.setCanceledOnTouchOutside(true)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            background = roundStroke(Color.argb(238, 12, 14, 28), dp(12), STROKE, dp(1))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = roundStroke(Color.argb(232, 12, 14, 28), dp(14), Color.argb(160, 97, 103, 137), dp(1))
         }
         root.addView(TextView(this).apply {
-            text = if (audio) "Piste audio" else "Sous-titres"
+            text = title
             setTextColor(Color.WHITE)
-            textSize = 18f
+            textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
-        })
-        root.addView(TextView(this).apply {
-            text = "OK pour sélectionner"
-            setTextColor(0xFFC9C6E4.toInt())
-            textSize = 12f
-            setPadding(0, dp(2), 0, dp(10))
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(8))
         })
         val list = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-        choices.forEach { choice ->
-            val selectedChoice = choice.id == selected
-            val button = panelButton((if (selectedChoice) "✓ " else "") + choice.name)
-            button.background = roundStroke(
-                if (selectedChoice) PANEL_FOCUS else PANEL,
-                dp(10),
-                if (selectedChoice) ACCENT_2 else STROKE,
-                dp(if (selectedChoice) 2 else 1)
-            )
+        choices.forEachIndexed { index, choice ->
+            val selectedChoice = index == selectedIndex
+            val button = choiceButton((if (selectedChoice) "✓  " else "   ") + label(choice), selectedChoice)
             button.setOnClickListener {
-                val ok = if (audio) currentPlayer.setAudioTrack(choice.id) else currentPlayer.setSpuTrack(choice.id)
-                statusView.text = if (ok) playbackStatus() else "Sélection impossible"
+                onSelect(choice)
                 dialog.dismiss()
             }
-            list.addView(button, LinearLayout.LayoutParams(-1, dp(42)).apply {
-                setMargins(0, 0, 0, dp(7))
+            list.addView(button, LinearLayout.LayoutParams(-1, dp(38)).apply {
+                setMargins(0, 0, 0, dp(6))
             })
         }
         root.addView(ScrollView(this).apply {
             addView(list)
-        }, LinearLayout.LayoutParams(-1, 0, 1f))
-        root.addView(panelButton("Fermer").apply { setOnClickListener { dialog.dismiss() } }, LinearLayout.LayoutParams(-1, dp(42)))
+            isVerticalScrollBarEnabled = false
+        }, LinearLayout.LayoutParams(-1, min(dp(312), dp(38) * choices.size + dp(8))))
         dialog.setContentView(root)
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-            dialog.window?.setDimAmount(0.32f)
-            dialog.window?.setLayout(dp(480), dp(420))
-            list.getChildAt(choices.indexOfFirst { it.id == selected }.coerceAtLeast(0))?.requestFocus()
+            dialog.window?.setDimAmount(0.18f)
+            dialog.window?.setGravity(Gravity.END or Gravity.CENTER_VERTICAL)
+            dialog.window?.setLayout(dp(360), -2)
+            dialog.window?.attributes = dialog.window?.attributes?.apply {
+                x = dp(22)
+            }
+            list.getChildAt(selectedIndex.coerceIn(0, choices.lastIndex))?.requestFocus()
+            enterImmersiveMode()
         }
         dialog.show()
+    }
+
+    private fun trackChoiceLabel(track: MediaPlayer.TrackDescription, audio: Boolean): String {
+        val raw = track.name?.trim().orEmpty()
+        val clean = when {
+            raw.equals("Disable", ignoreCase = true) -> if (audio) "Aucune piste" else "Désactivés"
+            raw.isBlank() -> if (audio) "Piste ${track.id}" else "Sous-titre ${track.id}"
+            else -> raw
+        }
+        return clean.replace(" - [", " · ").replace("]", "")
     }
 
     private fun showInfoDialog() {
@@ -1300,6 +1339,39 @@ class PlayerActivity : Activity() {
             textSize = 13f
             gravity = Gravity.CENTER
             background = roundStroke(PANEL, dp(10), STROKE, dp(1))
+        }
+
+    private fun choiceButton(label: String, selected: Boolean): Button =
+        controlButton(label).apply {
+            textSize = 13f
+            gravity = Gravity.CENTER_VERTICAL
+            setSingleLine(true)
+            setPadding(dp(12), 0, dp(12), 0)
+            background = roundStroke(
+                if (selected) Color.rgb(31, 35, 60) else PANEL,
+                dp(9),
+                if (selected) ACCENT_2 else Color.argb(170, 97, 103, 137),
+                dp(if (selected) 2 else 1)
+            )
+            setOnFocusChangeListener { view, focused ->
+                view.background = roundStroke(
+                    when {
+                        focused -> PANEL_FOCUS
+                        selected -> Color.rgb(31, 35, 60)
+                        else -> PANEL
+                    },
+                    dp(9),
+                    when {
+                        focused -> ACCENT_FOCUS
+                        selected -> ACCENT_2
+                        else -> Color.argb(170, 97, 103, 137)
+                    },
+                    dp(if (focused || selected) 2 else 1)
+                )
+                view.scaleX = if (focused) 1.025f else 1f
+                view.scaleY = if (focused) 1.025f else 1f
+                view.elevation = dp(if (focused) 12 else 2).toFloat()
+            }
         }
 
     private fun updateQualitySummary(label: String, state: QualityState) {

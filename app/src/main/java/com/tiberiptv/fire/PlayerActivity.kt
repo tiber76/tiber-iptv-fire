@@ -367,6 +367,7 @@ class PlayerActivity : Activity() {
                 KeyEvent.KEYCODE_DPAD_UP -> {
                     setControlsVisible(true)
                     topControlsActive = true
+                    cancelPendingScrub()
                     main.removeCallbacks(hideControlsRunnable)
                     topControlButtons.firstOrNull()?.requestFocus()
                     main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
@@ -375,13 +376,14 @@ class PlayerActivity : Activity() {
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
                     setControlsVisible(true)
                     topControlsActive = false
+                    cancelPendingScrub()
                     main.removeCallbacks(hideControlsRunnable)
                     seekBar.requestFocus()
                     main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                    if (topControlsActive && controlsVisible && currentFocus is Button) {
+                    if (isNavigatingTopControls()) {
                         focusAdjacentTopButton(1)
                         return true
                     }
@@ -389,7 +391,7 @@ class PlayerActivity : Activity() {
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_LEFT -> {
-                    if (topControlsActive && controlsVisible && currentFocus is Button) {
+                    if (isNavigatingTopControls()) {
                         focusAdjacentTopButton(-1)
                         return true
                     }
@@ -1135,6 +1137,7 @@ class PlayerActivity : Activity() {
         if (topControlButtons.isEmpty()) {
             return
         }
+        topControlsActive = true
         val currentIndex = topControlButtons.indexOf(currentFocus)
         val nextIndex = when {
             currentIndex < 0 -> 0
@@ -1143,6 +1146,23 @@ class PlayerActivity : Activity() {
         topControlButtons[nextIndex].requestFocus()
         main.removeCallbacks(hideControlsRunnable)
         main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
+    }
+
+    private fun isNavigatingTopControls(): Boolean =
+        controlsVisible && (topControlsActive || topControlButtons.contains(currentFocus))
+
+    private fun cancelPendingScrub() {
+        if (!scrubActive) {
+            return
+        }
+        scrubActive = false
+        scrubDirection = 0
+        userSeeking = false
+        updateProgress()
+        main.removeCallbacks(hideSeekOverlayRunnable)
+        if (::seekOverlayView.isInitialized) {
+            seekOverlayView.visibility = View.GONE
+        }
     }
 
     private fun setControlsVisible(visible: Boolean) {

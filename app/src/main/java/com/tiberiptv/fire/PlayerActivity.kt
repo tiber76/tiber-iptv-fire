@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -73,6 +74,15 @@ class PlayerActivity : Activity() {
     private val hideControlsRunnable = Runnable {
         setControlsVisible(false)
     }
+    private val hideSeekOverlayRunnable = Runnable {
+        if (::seekOverlayView.isInitialized) {
+            seekOverlayView.animate()
+                .alpha(0f)
+                .setDuration(180L)
+                .withEndAction { seekOverlayView.visibility = View.GONE }
+                .start()
+        }
+    }
 
     private var libVlc: LibVLC? = null
     private var player: MediaPlayer? = null
@@ -83,6 +93,7 @@ class PlayerActivity : Activity() {
     private lateinit var tamponStatusView: TextView
     private lateinit var timeView: TextView
     private lateinit var playerHintView: TextView
+    private lateinit var seekOverlayView: TextView
     private lateinit var playPauseButton: Button
     private lateinit var qualityButton: Button
     private lateinit var displayModeButton: Button
@@ -104,6 +115,11 @@ class PlayerActivity : Activity() {
     private var playbackStarted = false
     private var lastBufferingPercent = 0f
     private var lastPlaybackIssue = ""
+    private var scrubActive = false
+    private var scrubDirection = 0
+    private var scrubStartTimeMs = 0L
+    private var scrubTargetTimeMs = 0L
+    private var scrubStartedAtMs = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -161,7 +177,7 @@ class PlayerActivity : Activity() {
 
         playPauseButton = controlButton("Pause")
         val audio = controlButton("Audio")
-        val subtitles = controlButton("ST")
+        val subtitles = controlButton("Sous-titres")
         displayModeButton = controlButton(displayModeButtonText())
         val info = controlButton("Info")
         val beginning = controlButton("Début")
@@ -273,6 +289,17 @@ class PlayerActivity : Activity() {
                 setMargins(dp(18), 0, dp(18), dp(16))
             }
         )
+        seekOverlayView = TextView(this).apply {
+            visibility = View.GONE
+            alpha = 0f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            textSize = 28f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(24), dp(14), dp(24), dp(14))
+            background = roundStroke(Color.argb(226, 12, 14, 28), dp(18), ACCENT_2, dp(2))
+        }
+        root.addView(seekOverlayView, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         setContentView(root)
 
         playPauseButton.setOnClickListener { togglePlayPause() }
@@ -297,6 +324,12 @@ class PlayerActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_UP && isDpadSeekKey(event.keyCode)) {
+            if (scrubActive) {
+                commitScrubSeek()
+                return true
+            }
+        }
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_VOLUME_UP -> return adjustMediaVolume(AudioManager.ADJUST_RAISE)
@@ -352,7 +385,7 @@ class PlayerActivity : Activity() {
                         focusAdjacentTopButton(1)
                         return true
                     }
-                    seekBy(10_000L)
+                    handleDpadSeek(1, event)
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_LEFT -> {
@@ -360,17 +393,17 @@ class PlayerActivity : Activity() {
                         focusAdjacentTopButton(-1)
                         return true
                     }
-                    seekBy(-10_000L)
+                    handleDpadSeek(-1, event)
                     return true
                 }
                 KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
                 KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD -> {
-                    seekBy(30_000L)
+                    seekBy(PlaybackPolicy.SEEK_FORWARD_MS, ">> +30 sec")
                     return true
                 }
                 KeyEvent.KEYCODE_MEDIA_REWIND,
                 KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD -> {
-                    seekBy(-30_000L)
+                    seekBy(-PlaybackPolicy.SEEK_BACKWARD_MS, "<< -15 sec")
                     return true
                 }
             }
@@ -405,6 +438,7 @@ class PlayerActivity : Activity() {
     override fun onStop() {
         super.onStop()
         main.removeCallbacks(hideControlsRunnable)
+        main.removeCallbacks(hideSeekOverlayRunnable)
         releasePlayer()
         releaseBufferedPlayback()
         releaseRemoteGuard()
@@ -412,6 +446,7 @@ class PlayerActivity : Activity() {
 
     override fun onDestroy() {
         main.removeCallbacks(hideControlsRunnable)
+        main.removeCallbacks(hideSeekOverlayRunnable)
         releasePlayer()
         releaseBufferedPlayback()
         releaseRemoteGuard()
@@ -848,25 +883,108 @@ class PlayerActivity : Activity() {
     ): MediaPlayer.TrackDescription? =
         tracks?.firstOrNull { track -> track.id == selectedId }
 
-    private fun seekBy(deltaMs: Long) {
-        if (!canSeekPlayback()) {
+    private fun isDpadSeekKey(keyCode: Int): Boolean =
+        keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+
+    private fun handleDpadSeek(direction: Int, event: KeyEvent) {
+        if (!canSeekWithKnownDuration()) {
             showSeekUnavailable()
             return
         }
         val currentPlayer = player ?: return
         val length = currentPlayer.length
-        val currentTime = currentPlayer.time
-        if (length <= 0L && currentTime <= 0L) {
+        if (length <= 0L) {
+            showSeekUnavailable()
             return
         }
-        val upperBound = if (length > 0L) length else Long.MAX_VALUE
-        val target = max(0L, min(upperBound, currentTime + deltaMs))
+        if (!scrubActive || scrubDirection != direction) {
+            scrubActive = true
+            scrubDirection = direction
+            scrubStartTimeMs = currentPlayer.time
+            scrubTargetTimeMs = clampSeekTarget(scrubStartTimeMs + firstSeekStep(direction), length)
+            scrubStartedAtMs = SystemClock.uptimeMillis()
+        } else if (event.repeatCount > 0) {
+            val heldMs = SystemClock.uptimeMillis() - scrubStartedAtMs
+            scrubTargetTimeMs = clampSeekTarget(scrubTargetTimeMs + repeatedSeekStep(direction, heldMs), length)
+        }
+        userSeeking = true
+        seekBar.progress = max(0L, min(1_000L, scrubTargetTimeMs * 1_000L / length)).toInt()
+        updateTimeLabel(seekBar.progress)
+        showSeekOverlay(seekLabel(scrubTargetTimeMs - scrubStartTimeMs), scrubTargetTimeMs, length, hold = event.repeatCount > 0)
+    }
+
+    private fun commitScrubSeek() {
+        val currentPlayer = player ?: return
+        val length = currentPlayer.length
+        val target = scrubTargetTimeMs
+        scrubActive = false
+        scrubDirection = 0
+        userSeeking = false
+        if (!canSeekWithKnownDuration()) {
+            updateProgress()
+            showSeekUnavailable()
+            return
+        }
         currentPlayer.time = target
         updateProgress()
         timeView.text = if (length > 0L) {
             "${formatTime(target)} / ${formatTime(length)}"
         } else {
             formatTime(target)
+        }
+        showSeekOverlay(seekLabel(target - scrubStartTimeMs), target, length, hold = false)
+        showControlsTemporarily()
+    }
+
+    private fun seekBy(deltaMs: Long, label: String = seekLabel(deltaMs)) {
+        if (!canSeekWithKnownDuration()) {
+            showSeekUnavailable()
+            return
+        }
+        val currentPlayer = player ?: return
+        val length = currentPlayer.length
+        val currentTime = currentPlayer.time
+        val target = clampSeekTarget(currentTime + deltaMs, length)
+        currentPlayer.time = target
+        updateProgress()
+        timeView.text = "${formatTime(target)} / ${formatTime(length)}"
+        showSeekOverlay(label, target, length, hold = false)
+    }
+
+    private fun firstSeekStep(direction: Int): Long =
+        if (direction > 0) PlaybackPolicy.SEEK_FORWARD_MS else -PlaybackPolicy.SEEK_BACKWARD_MS
+
+    private fun repeatedSeekStep(direction: Int, heldMs: Long): Long {
+        val step = when {
+            heldMs >= PlaybackPolicy.SEEK_SCRUB_FAST_AFTER_MS -> PlaybackPolicy.SEEK_SCRUB_FAST_STEP_MS
+            heldMs >= PlaybackPolicy.SEEK_SCRUB_MEDIUM_AFTER_MS -> PlaybackPolicy.SEEK_SCRUB_MEDIUM_STEP_MS
+            direction > 0 -> PlaybackPolicy.SEEK_FORWARD_MS
+            else -> PlaybackPolicy.SEEK_BACKWARD_MS
+        }
+        return if (direction > 0) step else -step
+    }
+
+    private fun clampSeekTarget(targetMs: Long, lengthMs: Long): Long =
+        max(0L, min(lengthMs, targetMs))
+
+    private fun seekLabel(deltaMs: Long): String {
+        val seconds = max(1L, kotlin.math.abs(deltaMs) / 1_000L)
+        val prefix = if (deltaMs >= 0L) ">> +" else "<< -"
+        return "$prefix${seconds} sec"
+    }
+
+    private fun showSeekOverlay(label: String, targetMs: Long, lengthMs: Long, hold: Boolean) {
+        if (!::seekOverlayView.isInitialized) {
+            return
+        }
+        val suffix = if (lengthMs > 0L) "\n${formatTime(targetMs)} / ${formatTime(lengthMs)}" else ""
+        seekOverlayView.text = if (hold) "$label\nRelâche pour valider$suffix" else "$label$suffix"
+        seekOverlayView.visibility = View.VISIBLE
+        seekOverlayView.animate().cancel()
+        seekOverlayView.alpha = 1f
+        main.removeCallbacks(hideSeekOverlayRunnable)
+        if (!hold) {
+            main.postDelayed(hideSeekOverlayRunnable, PlaybackPolicy.SEEK_OVERLAY_HIDE_DELAY_MS)
         }
     }
 
@@ -906,12 +1024,27 @@ class PlayerActivity : Activity() {
     private fun canSeekPlayback(): Boolean =
         !preloadProxy || PreloadStreamServer.isComplete()
 
+    private fun canSeekWithKnownDuration(): Boolean =
+        canSeekPlayback() && (player?.length ?: 0L) > 0L
+
     private fun showSeekUnavailable() {
-        statusView.text = "Seek désactivé: tampon incomplet"
-        if (::playerHintView.isInitialized) {
-            playerHintView.text = "Tampon incomplet: lecture OK, déplacement disponible quand le tampon est complet"
+        val reason = when {
+            preloadProxy && !PreloadStreamServer.isComplete() -> "Seek désactivé: tampon incomplet"
+            (player?.length ?: 0L) <= 0L -> "Avance non disponible sur le direct"
+            else -> "Avance non disponible"
         }
-        Toast.makeText(this, "Avance/retour disponibles quand le tampon est complet.", Toast.LENGTH_SHORT).show()
+        scrubActive = false
+        userSeeking = false
+        statusView.text = reason
+        if (::playerHintView.isInitialized) {
+            playerHintView.text = when {
+                preloadProxy && !PreloadStreamServer.isComplete() ->
+                    "Tampon incomplet: lecture OK, déplacement disponible quand le tampon est complet"
+                else ->
+                    "Flux sans durée connue: avance/retour désactivés"
+            }
+        }
+        Toast.makeText(this, reason, Toast.LENGTH_SHORT).show()
         showControlsTemporarily()
     }
 
@@ -983,7 +1116,7 @@ class PlayerActivity : Activity() {
         if (preloadProxy && !PreloadStreamServer.isComplete()) {
             "OK pause/lecture • ↑ boutons • ↓ barre • seek après tampon complet"
         } else {
-            "OK pause/lecture • ↑ boutons • ↓ barre • ←/→ 10s • avance rapide 30s • Retour masque"
+            "OK pause/lecture • ↑ boutons • ↓ barre • ← -15s / → +30s • maintenir pour avancer • Retour masque"
         }
 
     private fun compactQualityText(): String {

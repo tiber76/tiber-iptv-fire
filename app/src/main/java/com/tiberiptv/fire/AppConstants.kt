@@ -29,4 +29,11 @@ internal object StoragePolicy {
 internal object PlaybackPolicy {
     const val RESUME_THRESHOLD_MS = 10_000L
     const val CONTROLS_HIDE_DELAY_MS = 4_000L
+    const val SEEK_BACKWARD_MS = 15_000L
+    const val SEEK_FORWARD_MS = 30_000L
+    const val SEEK_SCRUB_MEDIUM_AFTER_MS = 1_000L
+    const val SEEK_SCRUB_FAST_AFTER_MS = 3_000L
+    const val SEEK_SCRUB_MEDIUM_STEP_MS = 60_000L
+    const val SEEK_SCRUB_FAST_STEP_MS = 5L * 60L * 1_000L
+    const val SEEK_OVERLAY_HIDE_DELAY_MS = 1_200L
 }

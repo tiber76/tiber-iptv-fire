@@ -653,6 +653,7 @@ private fun HomeHubScreen(
     LaunchedEffect(Unit) {
         moviesFocusRequester.requestFocus()
     }
+    val refreshingMode = uiState.refreshingCatalogMode
 
     Column(
         modifier = Modifier
@@ -715,7 +716,7 @@ private fun HomeHubScreen(
             selectedProfile = uiState.networkProfile,
             onProfile = onNetworkProfile
         )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(20.dp))
         Row(
             modifier = Modifier
                 .widthIn(max = 1180.dp)
@@ -726,7 +727,8 @@ private fun HomeHubScreen(
                 title = "Films",
                 subtitle = "Catalogue VOD",
                 loadedAt = uiState.moviesCatalogLoadedAt,
-                refreshing = uiState.refreshingCatalogMode == Mode.MOVIES.name,
+                refreshing = refreshingMode == Mode.MOVIES.name,
+                refreshEnabled = refreshingMode == null,
                 accent = Color(0xFF16D6C5),
                 modifier = Modifier
                     .weight(1.55f)
@@ -742,7 +744,8 @@ private fun HomeHubScreen(
                     title = "Live",
                     subtitle = "Chaînes en direct",
                     loadedAt = uiState.liveCatalogLoadedAt,
-                    refreshing = uiState.refreshingCatalogMode == Mode.LIVE.name,
+                    refreshing = refreshingMode == Mode.LIVE.name,
+                    refreshEnabled = refreshingMode == null,
                     accent = Color(0xFF8FA2FF),
                     onRefresh = { onRefreshCatalog(Mode.LIVE) },
                     onClick = { onOpenMode("LIVE") }
@@ -751,14 +754,15 @@ private fun HomeHubScreen(
                     title = "Séries",
                     subtitle = "Saisons et épisodes",
                     loadedAt = uiState.seriesCatalogLoadedAt,
-                    refreshing = uiState.refreshingCatalogMode == Mode.SERIES.name,
+                    refreshing = refreshingMode == Mode.SERIES.name,
+                    refreshEnabled = refreshingMode == null,
                     accent = Color(0xFFFF5F87),
                     onRefresh = { onRefreshCatalog(Mode.SERIES) },
                     onClick = { onOpenMode("SERIES") }
                 )
             }
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(18.dp))
         Row(
             modifier = Modifier
                 .widthIn(max = 1180.dp)
@@ -1073,6 +1077,7 @@ private fun PrimaryModeButton(
     subtitle: String,
     loadedAt: Long,
     refreshing: Boolean,
+    refreshEnabled: Boolean,
     accent: Color,
     modifier: Modifier = Modifier,
     onRefresh: () -> Unit,
@@ -1165,17 +1170,12 @@ private fun PrimaryModeButton(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedButton(
-                        onClick = onRefresh,
-                        enabled = !refreshing,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = accent)
-                    ) {
-                        if (refreshing) {
-                            SignalLoader(sizeDp = 22, compact = true)
-                        } else {
-                            Text("Recharger")
-                        }
-                    }
+                    HomeRefreshButton(
+                        refreshing = refreshing,
+                        enabled = refreshEnabled && !refreshing,
+                        accent = accent,
+                        onClick = onRefresh
+                    )
                     Text(
                         text = "OK",
                         color = if (focused) TvFocusColor else Color(0xFF72799E),
@@ -1194,6 +1194,7 @@ private fun CompactModeButton(
     subtitle: String,
     loadedAt: Long,
     refreshing: Boolean,
+    refreshEnabled: Boolean,
     accent: Color,
     onRefresh: () -> Unit,
     onClick: () -> Unit
@@ -1274,17 +1275,56 @@ private fun CompactModeButton(
                     maxLines = 1
                 )
             }
-            OutlinedButton(
-                onClick = onRefresh,
-                enabled = !refreshing,
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = accent)
+            HomeRefreshButton(
+                refreshing = refreshing,
+                enabled = refreshEnabled && !refreshing,
+                accent = accent,
+                compact = true,
+                onClick = onRefresh
+            )
+        }
+    }
+}
+
+@Composable
+private fun HomeRefreshButton(
+    refreshing: Boolean,
+    enabled: Boolean,
+    accent: Color,
+    compact: Boolean = false,
+    onClick: () -> Unit
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .width(if (compact) 132.dp else 144.dp)
+            .height(if (compact) 34.dp else 38.dp),
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = accent,
+            disabledContentColor = if (refreshing) Color.White else Color(0xFF757A9B)
+        ),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+    ) {
+        if (refreshing) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (refreshing) {
-                    SignalLoader(sizeDp = 20, compact = true)
-                } else {
-                    Text("Maj")
-                }
+                SignalLoader(sizeDp = if (compact) 18 else 20, compact = true)
+                Text(
+                    "Rechargement...",
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
+        } else {
+            Text(
+                "Recharger",
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1
+            )
         }
     }
 }

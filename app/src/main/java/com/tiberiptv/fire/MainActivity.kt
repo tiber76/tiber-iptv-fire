@@ -1573,7 +1573,7 @@ private fun CatalogScreen(
             )
             CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(84.dp), onClick = onHome)
             CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(94.dp), onClick = onSettings)
-            CatalogHeaderButton(label = "Actualiser", modifier = Modifier.width(104.dp), enabled = !state.loading, onClick = onRefresh)
+            CatalogHeaderButton(label = "Recharger", modifier = Modifier.width(108.dp), enabled = !state.loading, onClick = onRefresh)
         }
         HeaderDownloadStatus(state)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1659,7 +1659,7 @@ private fun CatalogScreen(
                 PremiumEmptyState(
                     title = if (state.query.isBlank()) "Aucun contenu" else "Aucun résultat",
                     subtitle = emptyStateSubtitle(state),
-                    primaryAction = if (state.query.isBlank()) "Actualiser" else "Effacer",
+                    primaryAction = if (state.query.isBlank()) "Recharger" else "Effacer",
                     onPrimaryAction = {
                         if (state.query.isBlank()) onRefresh() else onSearch("")
                     }

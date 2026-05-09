@@ -265,6 +265,7 @@ private const val TOP_RATED_MONTH_SECONDS = 31L * 24L * 60L * 60L
 private const val TOP_RATED_SIX_MONTHS_SECONDS = 183L * 24L * 60L * 60L
 private const val BUFFER_LONG_AHEAD_BYTES = 1536L * 1024L * 1024L
 private const val BUFFER_COMPLETE_AHEAD_BYTES = Long.MAX_VALUE / 4L
+private const val DETAIL_PRELOAD_READY_BYTES = 250L * 1024L * 1024L
 private val RatingFractionRegex = Regex("""(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)""")
 private val RatingNumberRegex = Regex("""\d+(?:\.\d+)?""")
 
@@ -2713,10 +2714,8 @@ private fun PreloadOnlyActions(
     onCancelPreload: () -> Unit,
     onConvertToDownload: () -> Unit
 ) {
-    val total = state.preloadTotal
-    val progress = if (total > 0L) (state.preloadBytes.toFloat() / total.toFloat()).coerceIn(0f, 1f) else 0f
-    val readyBytes = state.preloadReadyBytes.takeIf { it > 0L } ?: state.networkProfile.preloadReadyBytes
-    val aheadBytes = state.preloadAheadBytes.takeIf { it > 0L } ?: state.networkProfile.preloadAheadBytes
+    val readyBytes = DETAIL_PRELOAD_READY_BYTES
+    val progress = (state.preloadBytes.toFloat() / readyBytes.toFloat()).coerceIn(0f, 1f)
     val ready = state.preloadBytes >= readyBytes
     val modeLabel = state.preloadModeLabel.ifBlank { PreloadMode.NORMAL.label }
     val readyLabel = when (modeLabel) {
@@ -2734,22 +2733,14 @@ private fun PreloadOnlyActions(
             color = Color.White,
             fontWeight = FontWeight.Bold
         )
-        if (total > 0L) {
-            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-            Text(
-                "${formatBytes(state.preloadBytes)} / prêt à ${formatBytes(readyBytes)} / avance cible ${formatPreloadTarget(aheadBytes)}",
-                color = Color.White
-            )
-        } else {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            Text(
-                "${formatBytes(state.preloadBytes)} préchargés / prêt à ${formatBytes(readyBytes)} / avance cible ${formatPreloadTarget(aheadBytes)}",
-                color = Color.White
-            )
-        }
+        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+        Text(
+            "${(progress * 100).toInt()}% - ${formatBytes(state.preloadBytes.coerceAtMost(readyBytes))} / ${formatBytes(readyBytes)}",
+            color = Color.White
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             DetailActionButton(
-                label = "Lire depuis début",
+                label = "Lire",
                 enabled = ready && !state.preloadCancelling && !state.preloadConverting,
                 primary = true,
                 onClick = onPlay

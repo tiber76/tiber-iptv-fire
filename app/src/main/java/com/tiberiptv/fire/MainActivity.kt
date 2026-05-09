@@ -1589,8 +1589,8 @@ private fun CatalogScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 18.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
         var searchDialogVisible by remember { mutableStateOf(false) }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1605,11 +1605,11 @@ private fun CatalogScreen(
                 label = "Profil: ${state.networkProfile.label}",
                 contentColor = networkProfileAccent(state.networkProfile),
                 onClick = onSettings,
-                modifier = Modifier.width(188.dp)
+                modifier = Modifier.width(170.dp)
             )
-            CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(94.dp), onClick = onHome)
-            CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(106.dp), onClick = onSettings)
-            CatalogHeaderButton(label = "Actualiser", modifier = Modifier.width(114.dp), enabled = !state.loading, onClick = onRefresh)
+            CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(84.dp), onClick = onHome)
+            CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(94.dp), onClick = onSettings)
+            CatalogHeaderButton(label = "Actualiser", modifier = Modifier.width(104.dp), enabled = !state.loading, onClick = onRefresh)
         }
         HeaderDownloadStatus(state)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1623,10 +1623,10 @@ private fun CatalogScreen(
             }
             TvSearchButton(
                 query = state.query,
-                modifier = Modifier.width(350.dp),
+                modifier = Modifier.width(300.dp),
                 onClick = { searchDialogVisible = true }
             )
-            CatalogHeaderButton(label = "Micro", modifier = Modifier.width(92.dp), onClick = onVoiceSearch)
+            CatalogHeaderButton(label = "Micro", modifier = Modifier.width(82.dp), onClick = onVoiceSearch)
         }
         if (searchDialogVisible) {
             SearchDialog(
@@ -1704,8 +1704,8 @@ private fun CatalogScreen(
             } else {
                 LazyColumn(
                     state = listState,
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
-                    contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 18.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     items(
@@ -1753,17 +1753,17 @@ private fun ContentRow(
             rowState.scrollToItem(restoreIndex)
         }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Text(
             visibleTitle,
             color = if (premium) Color(0xFFF3F5FF) else Color.White,
             fontWeight = FontWeight.Bold,
-            style = if (premium) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium
+            style = if (premium) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleSmall
         )
         LazyRow(
             state = rowState,
-            horizontalArrangement = Arrangement.spacedBy(if (premium) 14.dp else 12.dp),
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+            horizontalArrangement = Arrangement.spacedBy(if (premium) 12.dp else 10.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
         ) {
             items(
                 row.items,
@@ -1910,19 +1910,19 @@ private fun ContentCard(
     }
     val meta = cardMeta(item, localSize, resumeMeta)
     val cardWidth = when {
-        compact -> 188.dp
-        premium -> 184.dp
-        else -> 168.dp
+        compact -> 170.dp
+        premium -> 166.dp
+        else -> 150.dp
     }
     val cardHeight = when {
-        compact -> 196.dp
-        premium -> 366.dp
-        else -> 346.dp
+        compact -> 174.dp
+        premium -> 326.dp
+        else -> 304.dp
     }
     val posterHeight = when {
-        compact -> 106.dp
-        premium -> 274.dp
-        else -> 252.dp
+        compact -> 94.dp
+        premium -> 246.dp
+        else -> 224.dp
     }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val focusRequester = remember { FocusRequester() }
@@ -1959,8 +1959,8 @@ private fun ContentCard(
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(7.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             PosterWithBadges(
                 item = item,
@@ -1970,7 +1970,7 @@ private fun ContentCard(
                     .fillMaxWidth()
                     .height(posterHeight)
             )
-            Text(item.title, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
+            Text(item.title, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
             if (meta.isNotBlank()) {
                 Text(meta, color = Color(0xFFC9C6E4), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
             }
@@ -2273,7 +2273,7 @@ private fun DetailActionButton(
     }
     Surface(
         modifier = modifier
-            .height(42.dp)
+            .height(38.dp)
             .widthIn(min = 104.dp, max = 190.dp)
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
@@ -2668,8 +2668,8 @@ private fun CatalogHeaderButton(
     val shape = RoundedCornerShape(999.dp)
     Surface(
         modifier = modifier
-            .height(34.dp)
-            .widthIn(min = 76.dp)
+            .height(31.dp)
+            .widthIn(min = 68.dp)
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
                 scaleX = if (focused) 1.025f else 1f
@@ -2783,12 +2783,12 @@ private fun TvSearchButton(
                 text = "Recherche",
                 color = Color(0xFF47D3C2),
                 fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.labelMedium
+                style = MaterialTheme.typography.labelSmall
             )
             Text(
                 text = query.ifBlank { "OK pour saisir, ou Micro pour dicter" },
                 color = if (query.isBlank()) Color(0xFFC9C6E4) else Color.White,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
@@ -2889,9 +2889,9 @@ private fun TvChip(label: String, selected: Boolean, modifier: Modifier = Modifi
         Text(
             label,
             color = Color.White,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
         )
     }
 }

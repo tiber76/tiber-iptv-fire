@@ -16,7 +16,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -100,6 +99,7 @@ class PlayerActivity : Activity() {
     private var userSeeking = false
     private var usedFallback = false
     private var controlsVisible = true
+    private var topControlsActive = false
     private var displayMode = PlayerDisplayMode.ADAPT
     private var playbackStarted = false
     private var lastBufferingPercent = 0f
@@ -145,32 +145,32 @@ class PlayerActivity : Activity() {
         topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(18), dp(12), dp(14), dp(12))
-            background = roundStroke(PLAYER_CHROME, dp(16), STROKE, dp(1))
+            setPadding(dp(12), dp(8), dp(10), dp(8))
+            background = roundStroke(PLAYER_CHROME, dp(14), STROKE, dp(1))
             elevation = dp(10).toFloat()
         }
 
         val titleView = TextView(this).apply {
             text = title.orEmpty()
             setTextColor(Color.WHITE)
-            textSize = 18f
+            textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
             setSingleLine(true)
-            setPadding(0, 0, dp(14), 0)
+            setPadding(0, 0, dp(10), 0)
         }
 
         playPauseButton = controlButton("Pause")
         val audio = controlButton("Audio")
-        val subtitles = controlButton("Sous-titres")
+        val subtitles = controlButton("ST")
         displayModeButton = controlButton(displayModeButtonText())
-        val info = controlButton("Diagnostic")
+        val info = controlButton("Info")
         val beginning = controlButton("Début")
-        val retry = controlButton("Relancer")
+        val retry = controlButton("Retry")
         val close = controlButton("Retour")
         topControlButtons.clear()
         topControlButtons.addAll(listOf(playPauseButton, audio, subtitles, displayModeButton, info, beginning, retry, close))
 
-        topBar.addView(titleView, LinearLayout.LayoutParams(0, -2, 0.42f))
+        topBar.addView(titleView, LinearLayout.LayoutParams(0, -2, 0.30f))
         val buttonRail = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -183,17 +183,11 @@ class PlayerActivity : Activity() {
             addView(retry, buttonMargin())
             addView(close, buttonMargin())
         }
-        val topScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            isFocusable = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            addView(buttonRail, FrameLayout.LayoutParams(-2, -2))
-        }
-        topBar.addView(topScroll, LinearLayout.LayoutParams(0, -2, 0.58f))
+        topBar.addView(buttonRail, LinearLayout.LayoutParams(0, -2, 0.70f))
         root.addView(
             topBar,
             FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply {
-                setMargins(dp(18), dp(14), dp(18), 0)
+                setMargins(dp(14), dp(12), dp(14), 0)
             }
         )
 
@@ -339,6 +333,7 @@ class PlayerActivity : Activity() {
                 }
                 KeyEvent.KEYCODE_DPAD_UP -> {
                     setControlsVisible(true)
+                    topControlsActive = true
                     main.removeCallbacks(hideControlsRunnable)
                     topControlButtons.firstOrNull()?.requestFocus()
                     main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
@@ -346,13 +341,14 @@ class PlayerActivity : Activity() {
                 }
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
                     setControlsVisible(true)
+                    topControlsActive = false
                     main.removeCallbacks(hideControlsRunnable)
                     seekBar.requestFocus()
                     main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                    if (controlsVisible && currentFocus is Button) {
+                    if (topControlsActive && controlsVisible && currentFocus is Button) {
                         focusAdjacentTopButton(1)
                         return true
                     }
@@ -360,7 +356,7 @@ class PlayerActivity : Activity() {
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_LEFT -> {
-                    if (controlsVisible && currentFocus is Button) {
+                    if (topControlsActive && controlsVisible && currentFocus is Button) {
                         focusAdjacentTopButton(-1)
                         return true
                     }
@@ -515,7 +511,7 @@ class PlayerActivity : Activity() {
         }
     }
 
-    private fun displayModeButtonText(): String = "Écran ${displayMode.label}"
+    private fun displayModeButtonText(): String = displayMode.label
 
     private fun handlePlayerEvent(event: MediaPlayer.Event) {
         main.post {
@@ -664,23 +660,23 @@ class PlayerActivity : Activity() {
             choices.add(track)
         }
 
-        val dialog = AlertDialog.Builder(this).create()
+        val dialog = android.app.Dialog(this)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(16), dp(18), dp(16))
-            background = roundStroke(PLAYER_CHROME, dp(16), STROKE, dp(1))
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = roundStroke(Color.argb(238, 12, 14, 28), dp(12), STROKE, dp(1))
         }
         root.addView(TextView(this).apply {
             text = if (audio) "Piste audio" else "Sous-titres"
             setTextColor(Color.WHITE)
-            textSize = 22f
+            textSize = 18f
             typeface = Typeface.DEFAULT_BOLD
         })
         root.addView(TextView(this).apply {
-            text = if (audio) "Choisis la piste avec OK." else "Active ou change les sous-titres avec OK."
+            text = "OK pour sélectionner"
             setTextColor(0xFFC9C6E4.toInt())
-            textSize = 13f
-            setPadding(0, dp(4), 0, dp(12))
+            textSize = 12f
+            setPadding(0, dp(2), 0, dp(10))
         })
         val list = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -699,18 +695,19 @@ class PlayerActivity : Activity() {
                 statusView.text = if (ok) playbackStatus() else "Sélection impossible"
                 dialog.dismiss()
             }
-            list.addView(button, LinearLayout.LayoutParams(-1, dp(48)).apply {
-                setMargins(0, 0, 0, dp(8))
+            list.addView(button, LinearLayout.LayoutParams(-1, dp(42)).apply {
+                setMargins(0, 0, 0, dp(7))
             })
         }
         root.addView(ScrollView(this).apply {
             addView(list)
         }, LinearLayout.LayoutParams(-1, 0, 1f))
-        root.addView(panelButton("Fermer").apply { setOnClickListener { dialog.dismiss() } }, LinearLayout.LayoutParams(-1, dp(48)))
-        dialog.setView(root)
+        root.addView(panelButton("Fermer").apply { setOnClickListener { dialog.dismiss() } }, LinearLayout.LayoutParams(-1, dp(42)))
+        dialog.setContentView(root)
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-            dialog.window?.setLayout(dp(560), dp(520))
+            dialog.window?.setDimAmount(0.32f)
+            dialog.window?.setLayout(dp(480), dp(420))
             list.getChildAt(choices.indexOfFirst { it.id == selected }.coerceAtLeast(0))?.requestFocus()
         }
         dialog.show()
@@ -1023,6 +1020,9 @@ class PlayerActivity : Activity() {
         if (visible && ::playerHintView.isInitialized) {
             playerHintView.text = playerHintText()
         }
+        if (!visible) {
+            topControlsActive = false
+        }
         val bars = listOf(topBar, bottomBar)
         if (visible) {
             bars.forEach { bar ->
@@ -1050,10 +1050,10 @@ class PlayerActivity : Activity() {
             text = label
             isAllCaps = false
             setTextColor(Color.WHITE)
-            textSize = 13f
+            textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(12), 0, dp(12), 0)
-            minWidth = dp(76)
+            setPadding(dp(8), 0, dp(8), 0)
+            minWidth = dp(58)
             minHeight = 0
             minimumHeight = 0
             background = roundStroke(PANEL, dp(9), STROKE, dp(1))
@@ -1066,8 +1066,8 @@ class PlayerActivity : Activity() {
                     if (focused) ACCENT_FOCUS else STROKE,
                     dp(if (focused) 4 else 1)
                 )
-                view.scaleX = if (focused) 1.08f else 1f
-                view.scaleY = if (focused) 1.08f else 1f
+                view.scaleX = if (focused) 1.04f else 1f
+                view.scaleY = if (focused) 1.04f else 1f
                 view.elevation = dp(if (focused) 16 else 2).toFloat()
             }
             setOnTouchListener { view, event ->
@@ -1094,7 +1094,7 @@ class PlayerActivity : Activity() {
 
     private fun panelButton(label: String): Button =
         controlButton(label).apply {
-            textSize = 15f
+            textSize = 13f
             gravity = Gravity.CENTER
             background = roundStroke(PANEL, dp(10), STROKE, dp(1))
         }
@@ -1144,8 +1144,8 @@ class PlayerActivity : Activity() {
     }
 
     private fun buttonMargin(): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(-2, dp(44)).apply {
-            setMargins(dp(8), 0, 0, 0)
+        LinearLayout.LayoutParams(-2, dp(38)).apply {
+            setMargins(dp(5), 0, 0, 0)
         }
 
     private fun round(color: Int, radius: Int): GradientDrawable =
@@ -1222,7 +1222,7 @@ class PlayerActivity : Activity() {
         private val PANEL_FOCUS = Color.rgb(43, 40, 79)
         private val PLAYER_CHROME = Color.argb(218, 12, 14, 28)
         private val ACCENT_2 = Color.rgb(71, 211, 194)
-        private val ACCENT_FOCUS = Color.rgb(255, 209, 102)
+        private val ACCENT_FOCUS = Color.rgb(143, 162, 255)
         private val ERROR_ACCENT = Color.rgb(255, 138, 154)
         private val ERROR_TEXT = Color.rgb(255, 197, 205)
         private val STROKE = Color.rgb(51, 54, 86)

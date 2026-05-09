@@ -1714,11 +1714,11 @@ private fun CatalogScreen(
                     label = "Profil: ${state.networkProfile.label}",
                     contentColor = networkProfileAccent(state.networkProfile),
                     onClick = onSettings,
-                    modifier = Modifier.width(198.dp)
+                    modifier = Modifier.width(188.dp)
                 )
-                CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(78.dp), onClick = onHome)
-                CatalogHeaderButton(label = "Recharger", modifier = Modifier.width(108.dp), enabled = !state.loading, onClick = onRefresh)
-                CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(88.dp), onClick = onSettings)
+                CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(74.dp), onClick = onHome)
+                CatalogHeaderButton(label = "Recharger", modifier = Modifier.width(100.dp), enabled = !state.loading, onClick = onRefresh)
+                CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(82.dp), onClick = onSettings)
             }
             HeaderDownloadStatus(state)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1733,7 +1733,7 @@ private fun CatalogScreen(
                 Spacer(Modifier.weight(1f))
                 TvSearchButton(
                     query = state.query,
-                    modifier = Modifier.width(214.dp),
+                    modifier = Modifier.width(190.dp),
                     onClick = { searchDialogVisible = true }
                 )
                 TvChip(
@@ -2942,7 +2942,7 @@ private fun CatalogHeaderButton(
     val shape = RoundedCornerShape(999.dp)
     Surface(
         modifier = modifier
-            .height(31.dp)
+            .height(29.dp)
             .widthIn(min = 68.dp)
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
@@ -3041,7 +3041,7 @@ private fun TvSearchButton(
 ) {
     varFocusedSurface(
         modifier = modifier
-            .height(34.dp)
+            .height(30.dp)
             .clickable(onClick = onClick)
             .focusable(),
         shape = RoundedCornerShape(10.dp)
@@ -3165,7 +3165,7 @@ private fun TvChip(label: String, selected: Boolean, modifier: Modifier = Modifi
             color = Color.White,
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
         )
     }
 }

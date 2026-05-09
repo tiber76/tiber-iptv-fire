@@ -82,6 +82,11 @@ object PreloadStreamServer {
 
     @JvmStatic
     fun cleanupCache(context: Context) {
+        synchronized(staticLock) {
+            if (current != null) {
+                return
+            }
+        }
         val dir = File(context.cacheDir, CacheDirectories.BUFFER)
         if (!dir.exists()) {
             return

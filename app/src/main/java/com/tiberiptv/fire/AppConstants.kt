@@ -5,9 +5,38 @@ internal object RemoteLabels {
     const val BUFFER = "tampon"
     const val DOWNLOAD = "telechargement"
     const val POSTER = "affiche"
+    const val TRAILER = "bande-annonce"
+    const val LOGIN = "connexion"
+    const val MOVIE_DETAIL = "details film"
+    const val SERIES_DETAIL = "details serie"
     const val SYNC_PREFIX = "synchronisation "
 
     fun sync(scope: String): String = "$SYNC_PREFIX$scope"
+}
+
+internal object UserFacingMessages {
+    fun remoteBusy(action: String, activeLabel: String = RemoteActionGuard.activeLabel()): String =
+        "$action impossible pour le moment : ${remoteActionDescription(activeLabel)} est déjà en cours. Réessaie dans quelques secondes."
+
+    fun remoteGuardUnavailable(action: String): String =
+        "$action impossible pour le moment. Réessaie dans quelques secondes."
+
+    private fun remoteActionDescription(label: String): String {
+        val normalized = label.trim()
+        return when {
+            normalized.isEmpty() -> "une autre action"
+            normalized == RemoteLabels.POSTER -> "le chargement des affiches"
+            normalized == RemoteLabels.PLAYBACK -> "une lecture"
+            normalized == RemoteLabels.BUFFER -> "un tampon"
+            normalized == RemoteLabels.DOWNLOAD -> "un téléchargement"
+            normalized == RemoteLabels.TRAILER -> "l'ouverture d'une bande-annonce"
+            normalized == RemoteLabels.LOGIN -> "la connexion au compte"
+            normalized == RemoteLabels.MOVIE_DETAIL -> "le chargement d'une fiche film"
+            normalized == RemoteLabels.SERIES_DETAIL -> "le chargement d'une fiche série"
+            normalized.startsWith(RemoteLabels.SYNC_PREFIX) -> "une mise à jour du catalogue"
+            else -> "une autre action réseau"
+        }
+    }
 }
 
 internal object CacheDirectories {

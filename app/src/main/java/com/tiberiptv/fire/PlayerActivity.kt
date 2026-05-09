@@ -140,12 +140,12 @@ class PlayerActivity : Activity() {
             return
         }
         if (!remoteGuardLabel.isNullOrEmpty() && remoteGuardLabel != RemoteActionGuard.activeLabel()) {
-            Toast.makeText(this, "Lecture bloquee: verrou remote incoherent.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, UserFacingMessages.remoteGuardUnavailable("Lecture"), Toast.LENGTH_LONG).show()
             finish()
             return
         }
         if (isRemotePlaybackUrl(url) && remoteGuardLabel.isNullOrEmpty()) {
-            Toast.makeText(this, "Lecture bloquee: verrou remote absent.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, UserFacingMessages.remoteGuardUnavailable("Lecture"), Toast.LENGTH_LONG).show()
             finish()
             return
         }
@@ -758,7 +758,7 @@ class PlayerActivity : Activity() {
             .append("Buffer: ").append(stateStore.playerBufferMs()).append(" ms\n")
             .append("Remote: ").append(remoteGuardLabel ?: "local").append("\n")
             .append("Fallback utilisé: ").append(if (usedFallback) "oui" else "non").append("\n")
-            .append("Déplacement: ").append(if (canSeekPlayback()) "actif" else "bloqué par tampon incomplet").append("\n\n")
+            .append("Déplacement: ").append(if (canSeekPlayback()) "actif" else "limité tant que le tampon n'est pas complet").append("\n\n")
         message.append("Moteur\nLibVLC 3.7.0 avec décodage logiciel audio\n\n")
         val currentPlayer = player
         if (currentPlayer != null) {
@@ -1119,7 +1119,7 @@ class PlayerActivity : Activity() {
             playerHintView.text = if (status.complete) {
                 playerHintText()
             } else {
-                "OK pause/lecture • ←/→ dans la zone tamponnée • hors zone bloqué"
+                "OK pause/lecture • ←/→ dans la zone tamponnée • hors zone indisponible"
             }
         }
     }

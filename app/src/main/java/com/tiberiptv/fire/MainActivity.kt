@@ -219,15 +219,15 @@ class MainActivity : ComponentActivity() {
             Toast.makeText(this, "Bande-annonce indisponible.", Toast.LENGTH_SHORT).show()
             return
         }
-        if (!RemoteActionGuard.tryAcquire("bande-annonce")) {
-            Toast.makeText(this, "Bande-annonce bloquée: session distante active ${RemoteActionGuard.activeLabel()}.", Toast.LENGTH_LONG).show()
+        if (!RemoteActionGuard.tryAcquire(RemoteLabels.TRAILER)) {
+            Toast.makeText(this, UserFacingMessages.remoteBusy("Bande-annonce"), Toast.LENGTH_LONG).show()
             return
         }
         startActivity(
             Intent(this, TrailerActivity::class.java)
                 .putExtra(TrailerActivity.EXTRA_TITLE, title)
                 .putExtra(TrailerActivity.EXTRA_TRAILER, trailer)
-                .putExtra(TrailerActivity.EXTRA_REMOTE_GUARD_LABEL, "bande-annonce")
+                .putExtra(TrailerActivity.EXTRA_REMOTE_GUARD_LABEL, RemoteLabels.TRAILER)
         )
     }
 
@@ -541,8 +541,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     mode = mode,
                     settingsVisible = false,
                     loading = false,
-                    error = "Session distante active: ${RemoteActionGuard.activeLabel()}",
-                    status = "Synchronisation bloquée"
+                    error = UserFacingMessages.remoteBusy("Rechargement du catalogue"),
+                    status = "Action déjà en cours"
                 )
             }
             return
@@ -730,7 +730,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         if (!RemoteActionGuard.tryAcquire(RemoteLabels.PLAYBACK)) {
-            _uiState.update { it.copy(error = "Lecture bloquée: session distante active ${RemoteActionGuard.activeLabel()}.") }
+            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Lecture")) }
             return null
         }
         stateStore.addHistory(item)
@@ -774,7 +774,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (!RemoteActionGuard.tryAcquire(RemoteLabels.BUFFER)) {
-            _uiState.update { it.copy(error = "Tampon bloqué: session distante active ${RemoteActionGuard.activeLabel()}.") }
+            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Tampon")) }
             return
         }
 
@@ -892,7 +892,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (RemoteActionGuard.activeLabel() != RemoteLabels.BUFFER) {
-            _uiState.update { it.copy(error = "Conversion bloquée: verrou tampon absent.") }
+            _uiState.update { it.copy(error = UserFacingMessages.remoteGuardUnavailable("Conversion du tampon")) }
             return
         }
         if (downloadJob?.isActive == true || preloadJob?.isActive == true) {
@@ -1064,7 +1064,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (!RemoteActionGuard.tryAcquire(RemoteLabels.DOWNLOAD)) {
-            _uiState.update { it.copy(error = "Téléchargement bloqué: session distante active ${RemoteActionGuard.activeLabel()}.") }
+            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Téléchargement")) }
             return
         }
         downloadCancelRequested = false
@@ -1239,8 +1239,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun loadMovieDetail(item: XtreamModels.StreamItem) {
         val api = api ?: return
-        if (!RemoteActionGuard.tryAcquire("details film")) {
-            _uiState.update { it.copy(error = "Détails bloqués: session distante active ${RemoteActionGuard.activeLabel()}.") }
+        if (!RemoteActionGuard.tryAcquire(RemoteLabels.MOVIE_DETAIL)) {
+            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Fiche film")) }
             return
         }
         viewModelScope.launch {
@@ -1257,15 +1257,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (exception: Exception) {
                 _uiState.update { it.copy(error = "Détails indisponibles: ${exception.message}") }
             } finally {
-                RemoteActionGuard.release("details film")
+                RemoteActionGuard.release(RemoteLabels.MOVIE_DETAIL)
             }
         }
     }
 
     private fun loadSeries(item: XtreamModels.StreamItem) {
         val api = api ?: return
-        if (!RemoteActionGuard.tryAcquire("details serie")) {
-            _uiState.update { it.copy(error = "Série bloquée: session distante active ${RemoteActionGuard.activeLabel()}.") }
+        if (!RemoteActionGuard.tryAcquire(RemoteLabels.SERIES_DETAIL)) {
+            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Fiche série")) }
             return
         }
         viewModelScope.launch {
@@ -1275,7 +1275,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (exception: Exception) {
                 _uiState.update { it.copy(error = "Série indisponible: ${exception.message}") }
             } finally {
-                RemoteActionGuard.release("details serie")
+                RemoteActionGuard.release(RemoteLabels.SERIES_DETAIL)
             }
         }
     }

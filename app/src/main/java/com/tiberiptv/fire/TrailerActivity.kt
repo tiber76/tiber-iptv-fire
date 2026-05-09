@@ -16,8 +16,8 @@ class TrailerActivity : Activity() {
         super.onCreate(savedInstanceState)
         val trailer = intent.getStringExtra(EXTRA_TRAILER)
         remoteGuardLabel = intent.getStringExtra(EXTRA_REMOTE_GUARD_LABEL)
-        if (remoteGuardLabel != "bande-annonce" || remoteGuardLabel != RemoteActionGuard.activeLabel()) {
-            Toast.makeText(this, "Bande-annonce bloquee: verrou remote absent.", Toast.LENGTH_LONG).show()
+        if (remoteGuardLabel != RemoteLabels.TRAILER || remoteGuardLabel != RemoteActionGuard.activeLabel()) {
+            Toast.makeText(this, UserFacingMessages.remoteGuardUnavailable("Bande-annonce"), Toast.LENGTH_LONG).show()
             finish()
             return
         }

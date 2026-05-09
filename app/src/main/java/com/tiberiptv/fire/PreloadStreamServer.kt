@@ -39,7 +39,7 @@ object PreloadStreamServer {
     @Throws(Exception::class)
     fun start(context: Context, remoteUrl: String, maxAheadBytes: Long): Session {
         if (RemoteActionGuard.activeLabel() != RemoteLabels.BUFFER) {
-            throw IllegalStateException("Tampon bloque: verrou remote absent.")
+            throw IllegalStateException(UserFacingMessages.remoteGuardUnavailable("Tampon"))
         }
         synchronized(staticLock) {
             stop()

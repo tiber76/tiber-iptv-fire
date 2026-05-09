@@ -213,19 +213,18 @@ class XtreamApi(private val credentials: XtreamModels.Credentials) {
     @Throws(IOException::class)
     private fun requireApiSlot() {
         val label = RemoteActionGuard.activeLabel()
-        if (label == "connexion" ||
+        if (label == RemoteLabels.LOGIN ||
             label == "statut compte" ||
             label == "diagnostic serveur" ||
-            label == "details film" ||
-            label == "details serie" ||
+            label == RemoteLabels.MOVIE_DETAIL ||
+            label == RemoteLabels.SERIES_DETAIL ||
             label == "EPG" ||
             label == RemoteLabels.DOWNLOAD ||
             label.startsWith(RemoteLabels.SYNC_PREFIX)
         ) {
             return
         }
-        val active = label.ifEmpty { "aucun" }
-        throw IOException("Requete Xtream bloquee: verrou remote incompatible ($active).")
+        throw IOException(UserFacingMessages.remoteBusy("Action réseau", label))
     }
 
     private companion object {

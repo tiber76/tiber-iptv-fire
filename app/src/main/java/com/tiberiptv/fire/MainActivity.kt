@@ -495,7 +495,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update {
                 it.copy(
                     mode = mode,
-                    rows = withHistoryRow(cached),
+                    rows = withHistoryRow(mode, cached),
                     selectedItem = null,
                     selectedQualityHint = "",
                     selectedSizeBytes = -1L,
@@ -551,7 +551,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 stateStore.saveRows(mode.name, rows)
                 _uiState.update {
                     it.copy(
-                        rows = withHistoryRow(rows),
+                        rows = withHistoryRow(mode, rows),
                         loading = false,
                         selectedQualityHint = "",
                         selectedSizeBytes = -1L,
@@ -1241,16 +1241,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return if (items.isEmpty()) emptyList() else listOf(XtreamModels.ContentRow("Téléchargés", items))
     }
 
-    private fun withHistoryRow(rows: List<XtreamModels.ContentRow>): List<XtreamModels.ContentRow> {
-        val premiumRows = premiumRows(rows)
+    private fun withHistoryRow(mode: Mode, rows: List<XtreamModels.ContentRow>): List<XtreamModels.ContentRow> {
+        val premiumRows = premiumRows(mode, rows)
         return if (premiumRows.isEmpty()) rows else premiumRows + rows
     }
 
-    private fun premiumRows(rows: List<XtreamModels.ContentRow>): List<XtreamModels.ContentRow> {
+    private fun premiumRows(mode: Mode, rows: List<XtreamModels.ContentRow>): List<XtreamModels.ContentRow> {
         val allItems = rows
             .flatMap { row -> row.items.map { item -> row.title to item } }
             .distinctBy { (_, item) -> item.key() }
-        val history = stateStore.history(20)
+        val history = historyForMode(mode)
         val favorites = stateStore.favorites()
             .filter { favorite -> allItems.any { (_, item) -> item.key() == favorite.key() } }
         val fourK = allItems
@@ -1276,6 +1276,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addPremiumRow(PremiumRowKind.RECENT, "Ajoutés récemment", recent)
         }
     }
+
+    private fun historyForMode(mode: Mode): List<XtreamModels.StreamItem> =
+        when (mode) {
+            Mode.MOVIES -> stateStore.history(setOf(XtreamModels.StreamItem.TYPE_MOVIE), 20)
+            Mode.SERIES -> stateStore.history(
+                setOf(
+                    XtreamModels.StreamItem.TYPE_SERIES,
+                    XtreamModels.StreamItem.TYPE_EPISODE
+                ),
+                20
+            )
+            Mode.LIVE, Mode.FAVORITES, Mode.DOWNLOADS -> emptyList()
+        }
 
     private fun MutableList<XtreamModels.ContentRow>.addPremiumRow(
         kind: PremiumRowKind,

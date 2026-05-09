@@ -132,6 +132,16 @@ class AppStateStore(context: Context) {
     fun history(limit: Int): List<XtreamModels.StreamItem> =
         dao.history(limit).mapNotNull { entity -> itemFromJson(entity.item_json) }
 
+    fun history(types: Set<String>, limit: Int): List<XtreamModels.StreamItem> {
+        if (types.isEmpty()) {
+            return emptyList()
+        }
+        return dao.history(limit * 3)
+            .mapNotNull { entity -> itemFromJson(entity.item_json) }
+            .filter { item -> item.type in types }
+            .take(limit)
+    }
+
     fun saveDownload(item: XtreamModels.StreamItem, path: String?, downloadId: Long) {
         val keys = downloadKeys()
         keys.add(item.key())

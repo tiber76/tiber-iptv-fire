@@ -159,6 +159,8 @@ class MainActivity : ComponentActivity() {
                     onCancelDownload = viewModel::cancelDownload,
                     onDeleteDownload = viewModel::deleteDownload,
                     onClearImageCache = viewModel::clearImageCache,
+                    onClearPreloadCache = viewModel::clearPreloadCache,
+                    onClearCatalogCache = viewModel::clearCatalogCache,
                     onHome = { finish() },
                     onSettings = viewModel::openSettings,
                     onCloseSettings = { viewModel.loadMode(Mode.MOVIES, false) },
@@ -1212,6 +1214,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun clearPreloadCache() {
+        if (_uiState.value.preloadingItem != null || PreloadStreamServer.isActive()) {
+            _uiState.update {
+                it.copy(error = "Préchargement actif: annule-le avant de nettoyer le cache temporaire.")
+            }
+            return
+        }
+        PreloadStreamServer.cleanupCache(appContext)
+        val storage = storageInfo()
+        _uiState.update {
+            it.withStorage(storage).copy(status = "Cache préchargement nettoyé", error = null)
+        }
+    }
+
+    fun clearCatalogCache() {
+        stateStore.clearCatalogCaches()
+        _uiState.update {
+            it.copy(status = "Cache catalogue vidé", error = null)
+        }
+    }
+
     fun setSingleConnectionMode(enabled: Boolean) {
         stateStore.setSingleConnectionMode(enabled)
         _uiState.update { it.copy(singleConnectionMode = enabled) }
@@ -1554,6 +1577,8 @@ private fun MainRoute(
     onCancelDownload: () -> Unit,
     onDeleteDownload: (XtreamModels.StreamItem) -> Unit,
     onClearImageCache: () -> Unit,
+    onClearPreloadCache: () -> Unit,
+    onClearCatalogCache: () -> Unit,
     onHome: () -> Unit,
     onSettings: () -> Unit,
     onCloseSettings: () -> Unit,
@@ -1593,6 +1618,10 @@ private fun MainRoute(
                     onNetworkProfile = onNetworkProfile,
                     onCycleBuffer = onCycleBuffer,
                     onLiveFormat = onLiveFormat,
+                    onClearCatalogFilters = onClearCatalogFilters,
+                    onClearImageCache = onClearImageCache,
+                    onClearPreloadCache = onClearPreloadCache,
+                    onClearCatalogCache = onClearCatalogCache,
                     onLogout = onLogout
                 )
             } else if (state.selectedItem != null) {
@@ -2690,6 +2719,10 @@ private fun SettingsScreen(
     onNetworkProfile: (NetworkProfile) -> Unit,
     onCycleBuffer: () -> Unit,
     onLiveFormat: (String) -> Unit,
+    onClearCatalogFilters: () -> Unit,
+    onClearImageCache: () -> Unit,
+    onClearPreloadCache: () -> Unit,
+    onClearCatalogCache: () -> Unit,
     onLogout: () -> Unit
 ) {
     Column(
@@ -2759,6 +2792,46 @@ private fun SettingsScreen(
             )
         }
 
+        SettingsSectionCard(
+            title = "Catalogue",
+            subtitle = "Options d'affichage rapides pour retrouver une vue propre."
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Filtres et tri", color = Color.White, modifier = Modifier.weight(1f))
+                OutlinedButton(onClick = onClearCatalogFilters) {
+                    Text("Réinitialiser")
+                }
+            }
+            Text(
+                "Remet 4K, note, année et tri sur les valeurs par défaut.",
+                color = Color(0xFFC9C6E4),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        SettingsSectionCard(
+            title = "Stockage et caches",
+            subtitle = "Nettoie les données temporaires sans supprimer tes films téléchargés."
+        ) {
+            StorageOverviewRows(state)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onClearImageCache) {
+                    Text("Vider affiches")
+                }
+                OutlinedButton(onClick = onClearPreloadCache) {
+                    Text("Vider préchargement")
+                }
+                OutlinedButton(onClick = onClearCatalogCache) {
+                    Text("Vider catalogue")
+                }
+            }
+            Text(
+                "Les téléchargements conservés ne sont pas supprimés ici.",
+                color = Color(0xFFC9C6E4),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
         RemoteHelpPanel()
 
         SettingsSectionCard(
@@ -2798,6 +2871,16 @@ private fun SettingsSectionCard(
 }
 
 @Composable
+private fun StorageOverviewRows(state: MainUiState) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.widthIn(max = 620.dp)) {
+        StorageMetricRow("Espace libre", state.storageAvailableBytes)
+        StorageMetricRow("Téléchargements", state.storageDownloadBytes)
+        StorageMetricRow("Cache affiches", state.storagePosterCacheBytes)
+        StorageMetricRow("Préchargement temporaire", state.storageTamponCacheBytes)
+    }
+}
+
+@Composable
 private fun RemoteHelpPanel() {
     Surface(
         color = Color(0xFF1B1D30),
@@ -2808,8 +2891,8 @@ private fun RemoteHelpPanel() {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Aide télécommande", color = Color.White, fontWeight = FontWeight.Bold)
             RemoteShortcutRow("OK / Centre", "ouvrir, valider, pause/lecture dans le player")
-            RemoteShortcutRow("Droite / Gauche", "avancer ou reculer de 10 secondes si le flux le permet")
-            RemoteShortcutRow("Avance rapide / Retour rapide", "saut de 30 secondes dans le player")
+            RemoteShortcutRow("Droite / Gauche", "reculer de 15s ou avancer de 30s si le flux le permet")
+            RemoteShortcutRow("Maintenir gauche/droite", "défilement visuel, seek réel au relâchement")
             RemoteShortcutRow("Menu", "ouvrir les réglages ou le diagnostic player")
             RemoteShortcutRow("Retour", "revenir à l’écran précédent")
         }

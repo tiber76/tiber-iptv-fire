@@ -17,6 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1085,6 +1086,7 @@ private fun PrimaryModeButton(
 ) {
     val shape = RoundedCornerShape(8.dp)
     var focused by remember { mutableStateOf(false) }
+    val openInteractionSource = remember { MutableInteractionSource() }
     val focusScale by animateFloatAsState(
         targetValue = if (focused) 1.025f else 1f,
         label = "primaryModeFocusScale"
@@ -1111,15 +1113,7 @@ private fun PrimaryModeButton(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.linearGradient(
-                        listOf(
-                            accent.copy(alpha = 0.26f),
-                            Color(0xFF171B2E),
-                            Color(0xFF101323)
-                        )
-                    )
-                )
+                .background(if (focused) Color(0xFF20243A) else Color(0xFF171B2E))
         ) {
             Row(
                 modifier = Modifier
@@ -1141,7 +1135,11 @@ private fun PrimaryModeButton(
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(8.dp))
                         .onFocusChanged { focused = it.isFocused }
-                        .clickable(onClick = onClick)
+                        .clickable(
+                            interactionSource = openInteractionSource,
+                            indication = null,
+                            onClick = onClick
+                        )
                         .focusable(),
                     horizontalAlignment = Alignment.Start,
                     verticalArrangement = Arrangement.Center
@@ -1204,6 +1202,7 @@ private fun CompactModeButton(
 ) {
     val shape = RoundedCornerShape(8.dp)
     var focused by remember { mutableStateOf(false) }
+    val openInteractionSource = remember { MutableInteractionSource() }
     val focusScale by animateFloatAsState(
         targetValue = if (focused) 1.025f else 1f,
         label = "compactModeFocusScale"
@@ -1231,14 +1230,7 @@ private fun CompactModeButton(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.linearGradient(
-                        listOf(
-                            accent.copy(alpha = 0.20f),
-                            Color(0xFF151827)
-                        )
-                    )
-                )
+                .background(if (focused) Color(0xFF20243A) else Color(0xFF151827))
                 .padding(end = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
@@ -1256,7 +1248,11 @@ private fun CompactModeButton(
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(8.dp))
                     .onFocusChanged { focused = it.isFocused }
-                    .clickable(onClick = onClick)
+                    .clickable(
+                        interactionSource = openInteractionSource,
+                        indication = null,
+                        onClick = onClick
+                    )
                     .focusable(),
                 verticalArrangement = Arrangement.Center
             ) {

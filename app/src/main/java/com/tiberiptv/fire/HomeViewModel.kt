@@ -103,11 +103,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        if (!RemoteActionGuard.tryAcquire("connexion")) {
+        if (!RemoteActionGuard.tryAcquire(RemoteLabels.LOGIN)) {
             _uiState.update {
-                it.copy(
-                    errorMessage = "Session reseau active: connexion bloquee pour eviter une deuxieme requete distante."
-                )
+                it.copy(errorMessage = UserFacingMessages.remoteBusy("Connexion"))
             }
             return
         }
@@ -158,7 +156,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             } finally {
-                RemoteActionGuard.release("connexion")
+                RemoteActionGuard.release(RemoteLabels.LOGIN)
             }
         }
     }
@@ -245,7 +243,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         val label = "synchronisation ${mode.label}"
         if (!RemoteActionGuard.tryAcquire(label)) {
             _uiState.update {
-                it.copy(errorMessage = "Session distante active: ${RemoteActionGuard.activeLabel()}")
+                it.copy(errorMessage = UserFacingMessages.remoteBusy("Rechargement du catalogue"))
             }
             return
         }

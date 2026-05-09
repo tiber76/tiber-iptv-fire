@@ -10,17 +10,21 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
@@ -32,14 +36,15 @@ import kotlin.math.roundToInt
 
 enum class PlayerDisplayMode(
     val label: String,
+    val icon: String,
     val scaleType: MediaPlayer.ScaleType
 ) {
-    ADAPT("Adapter", MediaPlayer.ScaleType.SURFACE_BEST_FIT),
-    FULL("Plein écran", MediaPlayer.ScaleType.SURFACE_FIT_SCREEN),
-    ZOOM("Zoom", MediaPlayer.ScaleType.SURFACE_FILL),
-    RATIO_16_9("16:9", MediaPlayer.ScaleType.SURFACE_16_9),
-    RATIO_4_3("4:3", MediaPlayer.ScaleType.SURFACE_4_3),
-    ORIGINAL("Original", MediaPlayer.ScaleType.SURFACE_ORIGINAL);
+    ADAPT("Taille auto", "↔", MediaPlayer.ScaleType.SURFACE_BEST_FIT),
+    FULL("Plein écran", "▣", MediaPlayer.ScaleType.SURFACE_FIT_SCREEN),
+    ZOOM("Zoom", "+", MediaPlayer.ScaleType.SURFACE_FILL),
+    RATIO_16_9("16:9", "▭", MediaPlayer.ScaleType.SURFACE_16_9),
+    RATIO_4_3("4:3", "□", MediaPlayer.ScaleType.SURFACE_4_3),
+    ORIGINAL("Original", "1:1", MediaPlayer.ScaleType.SURFACE_ORIGINAL);
 
     fun next(): PlayerDisplayMode {
         val modes = entries
@@ -50,6 +55,13 @@ enum class PlayerDisplayMode(
         fun fromName(value: String?): PlayerDisplayMode =
             entries.firstOrNull { it.name == value } ?: ADAPT
     }
+}
+
+private enum class QualityState {
+    GOOD,
+    WARNING,
+    ERROR,
+    NEUTRAL
 }
 
 class PlayerActivity : Activity() {
@@ -63,6 +75,15 @@ class PlayerActivity : Activity() {
     private val hideControlsRunnable = Runnable {
         setControlsVisible(false)
     }
+    private val hideSeekOverlayRunnable = Runnable {
+        if (::seekOverlayView.isInitialized) {
+            seekOverlayView.animate()
+                .alpha(0f)
+                .setDuration(180L)
+                .withEndAction { seekOverlayView.visibility = View.GONE }
+                .start()
+        }
+    }
 
     private var libVlc: LibVLC? = null
     private var player: MediaPlayer? = null
@@ -72,7 +93,10 @@ class PlayerActivity : Activity() {
     private lateinit var statusView: TextView
     private lateinit var tamponStatusView: TextView
     private lateinit var timeView: TextView
+    private lateinit var playerHintView: TextView
+    private lateinit var seekOverlayView: TextView
     private lateinit var playPauseButton: Button
+    private lateinit var qualityButton: Button
     private lateinit var displayModeButton: Button
     private lateinit var seekBar: SeekBar
     private lateinit var stateStore: AppStateStore
@@ -87,9 +111,16 @@ class PlayerActivity : Activity() {
     private var userSeeking = false
     private var usedFallback = false
     private var controlsVisible = true
+    private var topControlsActive = false
     private var displayMode = PlayerDisplayMode.ADAPT
     private var playbackStarted = false
     private var lastBufferingPercent = 0f
+    private var lastPlaybackIssue = ""
+    private var scrubActive = false
+    private var scrubDirection = 0
+    private var scrubStartTimeMs = 0L
+    private var scrubTargetTimeMs = 0L
+    private var scrubStartedAtMs = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -110,12 +141,12 @@ class PlayerActivity : Activity() {
             return
         }
         if (!remoteGuardLabel.isNullOrEmpty() && remoteGuardLabel != RemoteActionGuard.activeLabel()) {
-            Toast.makeText(this, "Lecture bloquee: verrou remote incoherent.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, UserFacingMessages.remoteGuardUnavailable("Lecture"), Toast.LENGTH_LONG).show()
             finish()
             return
         }
         if (isRemotePlaybackUrl(url) && remoteGuardLabel.isNullOrEmpty()) {
-            Toast.makeText(this, "Lecture bloquee: verrou remote absent.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, UserFacingMessages.remoteGuardUnavailable("Lecture"), Toast.LENGTH_LONG).show()
             finish()
             return
         }
@@ -131,51 +162,67 @@ class PlayerActivity : Activity() {
         topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), dp(14), dp(20), dp(14))
-            setBackgroundColor(0xCC070812.toInt())
+            setPadding(dp(12), dp(8), dp(10), dp(8))
+            background = roundStroke(PLAYER_CHROME, dp(14), STROKE, dp(1))
+            elevation = dp(10).toFloat()
         }
 
         val titleView = TextView(this).apply {
             text = title.orEmpty()
             setTextColor(Color.WHITE)
-            textSize = 18f
+            textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
             setSingleLine(true)
-            setPadding(0, 0, dp(18), 0)
+            setPadding(0, 0, dp(10), 0)
         }
 
-        playPauseButton = controlButton("Pause")
-        val audio = controlButton("Audio")
-        val subtitles = controlButton("Sous-titres")
+        playPauseButton = controlButton(playPauseButtonText(playing = true))
+        val audio = controlButton("♪ Audio")
+        val subtitles = controlButton("CC Sous-titres")
         displayModeButton = controlButton(displayModeButtonText())
-        val info = controlButton("Diagnostic")
-        val beginning = controlButton("Début")
-        val retry = controlButton("Relancer")
-        val close = controlButton("Quitter")
+        val info = controlButton("i Info")
+        val beginning = controlButton("↺ Début")
+        val retry = controlButton("⟳ Relancer")
+        val close = controlButton("← Retour")
         topControlButtons.clear()
         topControlButtons.addAll(listOf(playPauseButton, audio, subtitles, displayModeButton, info, beginning, retry, close))
 
-        topBar.addView(titleView, LinearLayout.LayoutParams(0, -2, 1f))
-        topBar.addView(playPauseButton, buttonMargin())
-        topBar.addView(audio, buttonMargin())
-        topBar.addView(subtitles, buttonMargin())
-        topBar.addView(displayModeButton, buttonMargin())
-        topBar.addView(info, buttonMargin())
-        topBar.addView(beginning, buttonMargin())
-        topBar.addView(retry, buttonMargin())
-        topBar.addView(close, buttonMargin())
-        root.addView(topBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+        topBar.addView(titleView, LinearLayout.LayoutParams(0, -2, 0.30f))
+        val buttonRail = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(playPauseButton, buttonMargin())
+            addView(audio, buttonMargin())
+            addView(subtitles, buttonMargin())
+            addView(displayModeButton, buttonMargin())
+            addView(info, buttonMargin())
+            addView(beginning, buttonMargin())
+            addView(retry, buttonMargin())
+            addView(close, buttonMargin())
+        }
+        topBar.addView(buttonRail, LinearLayout.LayoutParams(0, -2, 0.70f))
+        root.addView(
+            topBar,
+            FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply {
+                setMargins(dp(14), dp(12), dp(14), 0)
+            }
+        )
 
         bottomBar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(14), dp(20), dp(16))
-            setBackgroundColor(0xCC070812.toInt())
+            setPadding(dp(18), dp(12), dp(18), dp(14))
+            background = roundStroke(PLAYER_CHROME, dp(16), STROKE, dp(1))
+            elevation = dp(10).toFloat()
         }
 
         statusView = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
+            setSingleLine(true)
+        }
+        qualityButton = panelButton(qualityButtonText("Qualité")).apply {
+            minWidth = dp(118)
         }
         tamponStatusView = TextView(this).apply {
             setTextColor(0xFFC9C6E4.toInt())
@@ -186,6 +233,12 @@ class PlayerActivity : Activity() {
             setTextColor(0xFFC9C6E4.toInt())
             textSize = 13f
             gravity = Gravity.END
+        }
+        playerHintView = TextView(this).apply {
+            setTextColor(0xFF9EA7CD.toInt())
+            textSize = 12f
+            setSingleLine(true)
+            text = playerHintText()
         }
         seekBar = SeekBar(this).apply {
             max = 1_000
@@ -218,18 +271,44 @@ class PlayerActivity : Activity() {
             })
         }
 
-        bottomBar.addView(statusView)
+        val statusRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(statusView, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(qualityButton, LinearLayout.LayoutParams(dp(132), dp(42)).apply {
+                setMargins(dp(12), 0, 0, 0)
+            })
+        }
+        bottomBar.addView(statusRow)
         bottomBar.addView(tamponStatusView)
         bottomBar.addView(seekBar, LinearLayout.LayoutParams(-1, dp(42)))
         bottomBar.addView(timeView)
-        root.addView(bottomBar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        bottomBar.addView(playerHintView)
+        root.addView(
+            bottomBar,
+            FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
+                setMargins(dp(18), 0, dp(18), dp(16))
+            }
+        )
+        seekOverlayView = TextView(this).apply {
+            visibility = View.GONE
+            alpha = 0f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            textSize = 28f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(24), dp(14), dp(24), dp(14))
+            background = roundStroke(Color.argb(226, 12, 14, 28), dp(18), ACCENT_2, dp(2))
+        }
+        root.addView(seekOverlayView, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         setContentView(root)
 
         playPauseButton.setOnClickListener { togglePlayPause() }
         audio.setOnClickListener { showTrackDialog(true) }
         subtitles.setOnClickListener { showTrackDialog(false) }
-        displayModeButton.setOnClickListener { cycleDisplayMode() }
+        displayModeButton.setOnClickListener { showDisplayModeDialog() }
         info.setOnClickListener { showInfoDialog() }
+        qualityButton.setOnClickListener { showQualityPanel() }
         beginning.setOnClickListener { playFromBeginning() }
         retry.setOnClickListener { restartPlayback(true) }
         close.setOnClickListener { finish() }
@@ -246,6 +325,12 @@ class PlayerActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_UP && isDpadSeekKey(event.keyCode)) {
+            if (scrubActive) {
+                commitScrubSeek()
+                return true
+            }
+        }
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_VOLUME_UP -> return adjustMediaVolume(AudioManager.ADJUST_RAISE)
@@ -282,6 +367,8 @@ class PlayerActivity : Activity() {
                 }
                 KeyEvent.KEYCODE_DPAD_UP -> {
                     setControlsVisible(true)
+                    topControlsActive = true
+                    cancelPendingScrub()
                     main.removeCallbacks(hideControlsRunnable)
                     topControlButtons.firstOrNull()?.requestFocus()
                     main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
@@ -289,35 +376,37 @@ class PlayerActivity : Activity() {
                 }
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
                     setControlsVisible(true)
+                    topControlsActive = false
+                    cancelPendingScrub()
                     main.removeCallbacks(hideControlsRunnable)
                     seekBar.requestFocus()
                     main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                    if (controlsVisible && currentFocus is Button) {
+                    if (isNavigatingTopControls()) {
                         focusAdjacentTopButton(1)
                         return true
                     }
-                    seekBy(10_000L)
+                    handleDpadSeek(1, event)
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_LEFT -> {
-                    if (controlsVisible && currentFocus is Button) {
+                    if (isNavigatingTopControls()) {
                         focusAdjacentTopButton(-1)
                         return true
                     }
-                    seekBy(-10_000L)
+                    handleDpadSeek(-1, event)
                     return true
                 }
                 KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
                 KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD -> {
-                    seekBy(30_000L)
+                    seekBy(PlaybackPolicy.SEEK_FORWARD_MS, ">> +30 sec")
                     return true
                 }
                 KeyEvent.KEYCODE_MEDIA_REWIND,
                 KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD -> {
-                    seekBy(-30_000L)
+                    seekBy(-PlaybackPolicy.SEEK_BACKWARD_MS, "<< -15 sec")
                     return true
                 }
             }
@@ -352,6 +441,7 @@ class PlayerActivity : Activity() {
     override fun onStop() {
         super.onStop()
         main.removeCallbacks(hideControlsRunnable)
+        main.removeCallbacks(hideSeekOverlayRunnable)
         releasePlayer()
         releaseBufferedPlayback()
         releaseRemoteGuard()
@@ -359,6 +449,7 @@ class PlayerActivity : Activity() {
 
     override fun onDestroy() {
         main.removeCallbacks(hideControlsRunnable)
+        main.removeCallbacks(hideSeekOverlayRunnable)
         releasePlayer()
         releaseBufferedPlayback()
         releaseRemoteGuard()
@@ -389,9 +480,11 @@ class PlayerActivity : Activity() {
     private fun startPlayback() {
         releasePlayer()
         statusView.text = "Chargement VLC..."
+        updateQualitySummary("Connexion", QualityState.NEUTRAL)
         timeView.text = ""
         playbackStarted = false
         lastBufferingPercent = 0f
+        lastPlaybackIssue = ""
         val bufferMs = stateStore.playerBufferMs()
 
         val options = arrayListOf(
@@ -456,7 +549,12 @@ class PlayerActivity : Activity() {
         }
     }
 
-    private fun displayModeButtonText(): String = "Format ${displayMode.label}"
+    private fun displayModeButtonText(): String = "${displayMode.icon} ${displayMode.label}"
+
+    private fun playPauseButtonText(playing: Boolean): String =
+        if (playing) "Ⅱ Pause" else "▶ Lire"
+
+    private fun qualityButtonText(label: String): String = "◇ $label"
 
     private fun handlePlayerEvent(event: MediaPlayer.Event) {
         main.post {
@@ -468,24 +566,29 @@ class PlayerActivity : Activity() {
                     applyDisplayMode(false)
                     statusView.text = playbackStatus()
                     updateTamponStatus()
-                    playPauseButton.text = "Pause"
+                    updateQualitySummary(compactQualityText(), QualityState.GOOD)
+                    playPauseButton.text = playPauseButtonText(playing = true)
                 }
                 MediaPlayer.Event.Paused -> {
                     statusView.text = "Pause"
-                    playPauseButton.text = "Lire"
+                    updateQualitySummary("Pause", QualityState.NEUTRAL)
+                    playPauseButton.text = playPauseButtonText(playing = false)
                     showControlsTemporarily()
                 }
                 MediaPlayer.Event.Buffering -> {
                     lastBufferingPercent = event.buffering
                     if (event.buffering in 1f..98.9f) {
                         statusView.text = String.format(Locale.US, "Chargement %.0f%%", event.buffering)
+                        updateQualitySummary(String.format(Locale.US, "Buffer %.0f%%", event.buffering), QualityState.WARNING)
                     } else if (player?.isPlaying == true) {
                         statusView.text = playbackStatus()
+                        updateQualitySummary(compactQualityText(), QualityState.GOOD)
                     }
                 }
                 MediaPlayer.Event.EndReached -> {
                     statusView.text = "Lecture terminee"
-                    playPauseButton.text = "Lire"
+                    updateQualitySummary("Terminé", QualityState.NEUTRAL)
+                    playPauseButton.text = playPauseButtonText(playing = false)
                     setControlsVisible(true)
                     releaseBufferedPlayback()
                     releaseRemoteGuard()
@@ -497,7 +600,12 @@ class PlayerActivity : Activity() {
                     releaseBufferedPlayback()
                     releaseRemoteGuard()
                     val message = playbackErrorMessage()
+                    lastPlaybackIssue = message
                     statusView.text = message
+                    updateQualitySummary("Erreur flux", QualityState.ERROR)
+                    if (::playerHintView.isInitialized) {
+                        playerHintView.text = playbackErrorHint()
+                    }
                     Toast.makeText(this, message, Toast.LENGTH_LONG).show()
                 }
                 MediaPlayer.Event.ESAdded,
@@ -505,6 +613,7 @@ class PlayerActivity : Activity() {
                 MediaPlayer.Event.ESSelected -> {
                     ensureAudioTrack()
                     statusView.text = playbackStatus()
+                    updateQualitySummary(compactQualityText(), QualityState.GOOD)
                 }
                 MediaPlayer.Event.TimeChanged,
                 MediaPlayer.Event.PositionChanged,
@@ -573,10 +682,10 @@ class PlayerActivity : Activity() {
         val currentPlayer = player ?: return
         if (currentPlayer.isPlaying) {
             currentPlayer.pause()
-            playPauseButton.text = "Lire"
+            playPauseButton.text = playPauseButtonText(playing = false)
         } else {
             currentPlayer.play()
-            playPauseButton.text = "Pause"
+            playPauseButton.text = playPauseButtonText(playing = true)
         }
     }
 
@@ -589,34 +698,115 @@ class PlayerActivity : Activity() {
         }
 
         val choices = mutableListOf<MediaPlayer.TrackDescription>()
-        val labels = mutableListOf<String>()
         val selected = if (audio) currentPlayer.audioTrack else currentPlayer.spuTrack
         for (track in tracks) {
             choices.add(track)
-            labels.add((if (track.id == selected) "* " else "") + track.name)
         }
 
-        AlertDialog.Builder(this)
-            .setTitle(if (audio) "Piste audio" else "Sous-titres")
-            .setItems(labels.toTypedArray()) { _, which ->
-                val choice = choices[which]
+        showPlayerChoiceDialog(
+            title = if (audio) "Audio" else "Sous-titres",
+            choices = choices,
+            selectedIndex = choices.indexOfFirst { it.id == selected }.coerceAtLeast(0),
+            label = { choice -> trackChoiceLabel(choice, audio) },
+            onSelect = { choice ->
                 val ok = if (audio) currentPlayer.setAudioTrack(choice.id) else currentPlayer.setSpuTrack(choice.id)
-                statusView.text = if (ok) playbackStatus() else "Selection impossible"
+                statusView.text = if (ok) playbackStatus() else "Sélection impossible"
             }
-            .show()
+        )
+    }
+
+    private fun showDisplayModeDialog() {
+        showPlayerChoiceDialog(
+            title = "Taille",
+            choices = PlayerDisplayMode.entries.toList(),
+            selectedIndex = displayMode.ordinal,
+            label = { mode -> "${mode.icon}  ${mode.label}" },
+            onSelect = { mode ->
+                displayMode = mode
+                stateStore.setPlayerDisplayMode(displayMode)
+                applyDisplayMode(true)
+                showControlsTemporarily()
+            }
+        )
+    }
+
+    private fun <T> showPlayerChoiceDialog(
+        title: String,
+        choices: List<T>,
+        selectedIndex: Int,
+        label: (T) -> String,
+        onSelect: (T) -> Unit
+    ) {
+        val dialog = android.app.Dialog(this)
+        dialog.setCanceledOnTouchOutside(true)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = roundStroke(Color.argb(232, 12, 14, 28), dp(14), Color.argb(160, 97, 103, 137), dp(1))
+        }
+        root.addView(TextView(this).apply {
+            text = title
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(8))
+        })
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        choices.forEachIndexed { index, choice ->
+            val selectedChoice = index == selectedIndex
+            val button = choiceButton((if (selectedChoice) "✓  " else "   ") + label(choice), selectedChoice)
+            button.setOnClickListener {
+                onSelect(choice)
+                dialog.dismiss()
+            }
+            list.addView(button, LinearLayout.LayoutParams(-1, dp(38)).apply {
+                setMargins(0, 0, 0, dp(6))
+            })
+        }
+        root.addView(ScrollView(this).apply {
+            addView(list)
+            isVerticalScrollBarEnabled = false
+        }, LinearLayout.LayoutParams(-1, min(dp(312), dp(38) * choices.size + dp(8))))
+        dialog.setContentView(root)
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+            dialog.window?.setDimAmount(0.18f)
+            dialog.window?.setGravity(Gravity.CENTER)
+            dialog.window?.setLayout(dp(360), -2)
+            list.getChildAt(selectedIndex.coerceIn(0, choices.lastIndex))?.requestFocus()
+            enterImmersiveMode()
+        }
+        dialog.show()
+    }
+
+    private fun trackChoiceLabel(track: MediaPlayer.TrackDescription, audio: Boolean): String {
+        val raw = track.name?.trim().orEmpty()
+        val clean = when {
+            raw.equals("Disable", ignoreCase = true) -> if (audio) "Aucune piste" else "Désactivés"
+            raw.isBlank() -> if (audio) "Piste ${track.id}" else "Sous-titre ${track.id}"
+            else -> raw
+        }
+        return clean.replace(" - [", " · ").replace("]", "")
     }
 
     private fun showInfoDialog() {
         val message = StringBuilder()
-        message.append("Moteur:\nLibVLC 3.7.0 avec decodage logiciel audio\n\n")
-        message.append("Affichage:\n").append(displayMode.label).append("\n\n")
-        message.append("URL:\n").append(streamUrl).append("\n\n")
+        message.append("Lecture\n")
+            .append("Etat: ").append(playbackStatus()).append("\n")
+            .append("Affichage: ").append(displayMode.label).append("\n")
+            .append("Buffer: ").append(stateStore.playerBufferMs()).append(" ms\n")
+            .append("Remote: ").append(remoteGuardLabel ?: "local").append("\n")
+            .append("Fallback utilisé: ").append(if (usedFallback) "oui" else "non").append("\n")
+            .append("Déplacement: ").append(if (canSeekPlayback()) "actif" else "limité tant que le préchargement n'est pas complet").append("\n\n")
+        message.append("Moteur\nLibVLC 3.7.0 avec décodage logiciel audio\n\n")
         val currentPlayer = player
         if (currentPlayer != null) {
-            message.append("Etat:\n").append(playbackStatus()).append("\n\n")
             val videoTrack = currentPlayer.currentVideoTrack
             if (videoTrack != null) {
-                message.append("Video:\n")
+                message.append("Vidéo\n")
                     .append(codecLabel(videoTrack.codec))
                     .append(" - ")
                     .append(videoTrack.width)
@@ -631,28 +821,73 @@ class PlayerActivity : Activity() {
             appendTracks(message, "Pistes audio", currentPlayer.audioTracks, currentPlayer.audioTrack)
             appendTracks(message, "Sous-titres", currentPlayer.spuTracks, currentPlayer.spuTrack)
         }
+        if (preloadProxy) {
+            val tampon = PreloadStreamServer.status()
+            message.append("\nPréchargement\n")
+                .append("Avance: ").append(formatBytes(tampon.aheadBytes)).append("\n")
+                .append("Téléchargé: ").append(formatBytes(tampon.downloadedBytes)).append(totalSuffix(tampon.totalBytes)).append("\n")
+                .append("Complet: ").append(if (tampon.complete) "oui" else "non").append("\n")
+            tampon.errorMessage?.let { error -> message.append("Erreur: ").append(error).append("\n") }
+        }
+        message.append("\nURL\n").append(streamUrl)
 
-        AlertDialog.Builder(this)
-            .setTitle("Diagnostic streaming")
-            .setMessage(message.toString())
-            .setPositiveButton("OK", null)
-            .show()
+        showPremiumTextDialog("Diagnostic qualité", message.toString())
+    }
+
+    private fun showQualityPanel() {
+        val message = StringBuilder()
+        message.append("Résumé\n")
+            .append("Etat: ").append(if (lastPlaybackIssue.isBlank()) playbackStatus().ifBlank { "chargement" } else lastPlaybackIssue).append("\n")
+            .append("Buffer: ").append(stateStore.playerBufferMs()).append(" ms\n")
+            .append("Affichage: ").append(displayMode.label).append("\n")
+            .append("Déplacement: ").append(if (canSeekPlayback()) "actif" else "attente préchargement complet").append("\n")
+        player?.currentVideoTrack?.let { track ->
+            message.append("Vidéo: ")
+                .append(track.width)
+                .append("x")
+                .append(track.height)
+                .append(" ")
+                .append(codecLabel(track.codec))
+                .append("\n")
+        }
+        selectedTrack(player?.audioTracks, player?.audioTrack ?: -1)?.let { track ->
+            message.append("Audio: ").append(track.name).append("\n")
+        }
+        if (preloadProxy) {
+            val tampon = PreloadStreamServer.status()
+            message.append("\nPréchargement\n")
+                .append("Avance: ").append(formatBytes(tampon.aheadBytes)).append("\n")
+                .append("Téléchargé: ").append(formatBytes(tampon.downloadedBytes)).append(totalSuffix(tampon.totalBytes)).append("\n")
+                .append("Seek: ").append(if (tampon.complete) "actif" else "désactivé temporairement").append("\n")
+        }
+        if (lastPlaybackIssue.isNotBlank()) {
+            message.append("\nAction conseillée\n").append(playbackErrorHint()).append("\n")
+        }
+        showPremiumTextDialog("Qualité du flux", message.toString(), compact = true)
     }
 
     private fun playbackErrorMessage(): String {
         val tamponError = if (preloadProxy) PreloadStreamServer.status().errorMessage else null
         return when {
-            tamponError != null -> "Tampon interrompu: $tamponError"
+            tamponError != null -> "Préchargement interrompu: $tamponError"
             preloadProxy && !PreloadStreamServer.status().complete ->
-                "Lecture tampon instable: le cache local n'a pas fourni assez de données."
+                "Préchargement insuffisant: le cache local n'a pas encore assez de données."
             !playbackStarted && lastBufferingPercent <= 0f ->
-                "Lecture impossible: aucune donnée reçue. Réseau, VPN ou flux refusé probable."
+                "Flux indisponible: aucune donnée reçue."
             !playbackStarted ->
-                "Lecture impossible: flux refusé ou format non accepté par VLC."
+                "Lecture impossible: flux refusé ou format non accepté."
             else ->
                 "Lecture interrompue: réseau instable, codec non supporté ou flux coupé."
         }
     }
+
+    private fun playbackErrorHint(): String =
+        when {
+            preloadProxy -> "Attends un préchargement plus avancé, ou convertis en téléchargement complet si le réseau est lent."
+            !usedFallback && !fallbackStreamUrl.isNullOrBlank() -> "Essaie Relancer: l'app peut tenter le format alternatif du flux."
+            isRemotePlaybackUrl(streamUrl) -> "Vérifie VPN/débit, puis essaie Relancer. Si le flux refuse VLC, tente Télécharger ou Précharger depuis la fiche."
+            else -> "Le fichier local peut être incomplet ou illisible. Supprime-le puis relance un téléchargement si besoin."
+        }
 
     private fun appendTracks(
         message: StringBuilder,
@@ -692,19 +927,56 @@ class PlayerActivity : Activity() {
     ): MediaPlayer.TrackDescription? =
         tracks?.firstOrNull { track -> track.id == selectedId }
 
-    private fun seekBy(deltaMs: Long) {
-        if (!canSeekPlayback()) {
+    private fun isDpadSeekKey(keyCode: Int): Boolean =
+        keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+
+    private fun handleDpadSeek(direction: Int, event: KeyEvent) {
+        val currentPlayer = player ?: return
+        val length = currentPlayer.length
+        if (length <= 0L) {
             showSeekUnavailable()
             return
         }
+        if (!scrubActive || scrubDirection != direction) {
+            scrubActive = true
+            scrubDirection = direction
+            scrubStartTimeMs = currentPlayer.time
+            scrubTargetTimeMs = clampSeekTarget(scrubStartTimeMs + firstSeekStep(direction), length)
+            scrubStartedAtMs = SystemClock.uptimeMillis()
+        } else if (event.repeatCount > 0) {
+            val heldMs = SystemClock.uptimeMillis() - scrubStartedAtMs
+            scrubTargetTimeMs = clampSeekTarget(scrubTargetTimeMs + repeatedSeekStep(direction, heldMs), length)
+        }
+        var blockedByBuffer = false
+        if (!canSeekToTime(scrubTargetTimeMs, length)) {
+            val safeLimit = safeBufferedPositionMs(length)
+            if (direction > 0 && safeLimit > currentPlayer.time) {
+                scrubTargetTimeMs = clampSeekTarget(safeLimit, length)
+                blockedByBuffer = true
+            } else {
+                showSeekUnavailable()
+                return
+            }
+        }
+        userSeeking = true
+        seekBar.progress = max(0L, min(1_000L, scrubTargetTimeMs * 1_000L / length)).toInt()
+        updateTimeLabel(seekBar.progress)
+        val label = if (blockedByBuffer) "Hors zone préchargée" else seekLabel(scrubTargetTimeMs - scrubStartTimeMs)
+        showSeekOverlay(label, scrubTargetTimeMs, length, hold = event.repeatCount > 0)
+    }
+
+    private fun commitScrubSeek() {
         val currentPlayer = player ?: return
         val length = currentPlayer.length
-        val currentTime = currentPlayer.time
-        if (length <= 0L && currentTime <= 0L) {
+        val target = scrubTargetTimeMs
+        scrubActive = false
+        scrubDirection = 0
+        userSeeking = false
+        if (!canSeekToTime(target, length)) {
+            updateProgress()
+            showSeekUnavailable()
             return
         }
-        val upperBound = if (length > 0L) length else Long.MAX_VALUE
-        val target = max(0L, min(upperBound, currentTime + deltaMs))
         currentPlayer.time = target
         updateProgress()
         timeView.text = if (length > 0L) {
@@ -712,17 +984,76 @@ class PlayerActivity : Activity() {
         } else {
             formatTime(target)
         }
+        showSeekOverlay(seekLabel(target - scrubStartTimeMs), target, length, hold = false)
+        showControlsTemporarily()
     }
 
-    private fun seekToFraction(fraction: Float) {
-        if (!canSeekPlayback()) {
+    private fun seekBy(deltaMs: Long, label: String = seekLabel(deltaMs)) {
+        val currentPlayer = player ?: return
+        val length = currentPlayer.length
+        if (length <= 0L) {
             showSeekUnavailable()
             return
         }
+        val currentTime = currentPlayer.time
+        val target = clampSeekTarget(currentTime + deltaMs, length)
+        if (!canSeekToTime(target, length)) {
+            showSeekUnavailable()
+            return
+        }
+        currentPlayer.time = target
+        updateProgress()
+        timeView.text = "${formatTime(target)} / ${formatTime(length)}"
+        showSeekOverlay(label, target, length, hold = false)
+    }
+
+    private fun firstSeekStep(direction: Int): Long =
+        if (direction > 0) PlaybackPolicy.SEEK_FORWARD_MS else -PlaybackPolicy.SEEK_BACKWARD_MS
+
+    private fun repeatedSeekStep(direction: Int, heldMs: Long): Long {
+        val step = when {
+            heldMs >= PlaybackPolicy.SEEK_SCRUB_FAST_AFTER_MS -> PlaybackPolicy.SEEK_SCRUB_FAST_STEP_MS
+            heldMs >= PlaybackPolicy.SEEK_SCRUB_MEDIUM_AFTER_MS -> PlaybackPolicy.SEEK_SCRUB_MEDIUM_STEP_MS
+            direction > 0 -> PlaybackPolicy.SEEK_FORWARD_MS
+            else -> PlaybackPolicy.SEEK_BACKWARD_MS
+        }
+        return if (direction > 0) step else -step
+    }
+
+    private fun clampSeekTarget(targetMs: Long, lengthMs: Long): Long =
+        max(0L, min(lengthMs, targetMs))
+
+    private fun seekLabel(deltaMs: Long): String {
+        val seconds = max(1L, kotlin.math.abs(deltaMs) / 1_000L)
+        val prefix = if (deltaMs >= 0L) ">> +" else "<< -"
+        return "$prefix${seconds} sec"
+    }
+
+    private fun showSeekOverlay(label: String, targetMs: Long, lengthMs: Long, hold: Boolean) {
+        if (!::seekOverlayView.isInitialized) {
+            return
+        }
+        val suffix = if (lengthMs > 0L) "\n${formatTime(targetMs)} / ${formatTime(lengthMs)}" else ""
+        seekOverlayView.text = if (hold) "$label\nRelâche pour valider$suffix" else "$label$suffix"
+        seekOverlayView.visibility = View.VISIBLE
+        seekOverlayView.animate().cancel()
+        seekOverlayView.alpha = 1f
+        main.removeCallbacks(hideSeekOverlayRunnable)
+        if (!hold) {
+            main.postDelayed(hideSeekOverlayRunnable, PlaybackPolicy.SEEK_OVERLAY_HIDE_DELAY_MS)
+        }
+    }
+
+    private fun seekToFraction(fraction: Float) {
         val currentPlayer = player ?: return
         val length = currentPlayer.length
         if (length > 0L) {
-            currentPlayer.time = (length * max(0f, min(1f, fraction))).roundToInt().toLong()
+            val target = (length * max(0f, min(1f, fraction))).roundToInt().toLong()
+            if (canSeekToTime(target, length)) {
+                currentPlayer.time = target
+            } else {
+                showSeekUnavailable()
+            }
         }
     }
 
@@ -741,15 +1072,61 @@ class PlayerActivity : Activity() {
             seekBar.progress = 0
         }
         updateTamponStatus()
+        if (lastPlaybackIssue.isBlank() && currentPlayer.isPlaying) {
+            updateQualitySummary(compactQualityText(), QualityState.GOOD)
+        }
         updateTimeLabel(seekBar.progress)
     }
 
     private fun canSeekPlayback(): Boolean =
-        !preloadProxy || PreloadStreamServer.isComplete()
+        !preloadProxy ||
+            PreloadStreamServer.isComplete() ||
+            PreloadStreamServer.status().let { it.totalBytes > 0L && it.safeSeekBytes > 0L }
+
+    private fun canSeekToTime(targetMs: Long, lengthMs: Long): Boolean {
+        if (lengthMs <= 0L) {
+            return false
+        }
+        if (!preloadProxy) {
+            return true
+        }
+        val status = PreloadStreamServer.status()
+        if (status.complete) {
+            return true
+        }
+        if (status.totalBytes <= 0L || status.safeSeekBytes <= 0L) {
+            return false
+        }
+        val targetBytes = targetMs * status.totalBytes / lengthMs
+        return targetBytes <= status.safeSeekBytes
+    }
+
+    private fun safeBufferedPositionMs(lengthMs: Long): Long {
+        val status = PreloadStreamServer.status()
+        if (lengthMs <= 0L || status.totalBytes <= 0L || status.safeSeekBytes <= 0L) {
+            return 0L
+        }
+        return max(0L, min(lengthMs, status.safeSeekBytes * lengthMs / status.totalBytes))
+    }
 
     private fun showSeekUnavailable() {
-        statusView.text = "Seek désactivé: tampon incomplet"
-        Toast.makeText(this, "Avance/retour disponibles quand le tampon est complet.", Toast.LENGTH_SHORT).show()
+        val reason = when {
+            preloadProxy && !PreloadStreamServer.isComplete() -> "Position hors zone préchargée"
+            (player?.length ?: 0L) <= 0L -> "Avance non disponible sur le direct"
+            else -> "Avance non disponible"
+        }
+        scrubActive = false
+        userSeeking = false
+        statusView.text = reason
+        if (::playerHintView.isInitialized) {
+            playerHintView.text = when {
+                preloadProxy && !PreloadStreamServer.isComplete() ->
+                    "Préchargement incomplet: lecture OK, déplacement disponible quand le préchargement est complet"
+                else ->
+                    "Flux sans durée connue: avance/retour désactivés"
+            }
+        }
+        Toast.makeText(this, reason, Toast.LENGTH_SHORT).show()
         showControlsTemporarily()
     }
 
@@ -761,13 +1138,31 @@ class PlayerActivity : Activity() {
         tamponStatusView.visibility = View.VISIBLE
         tamponStatusView.text = when {
             status.errorMessage != null ->
-                "Tampon: erreur ${status.errorMessage}"
+                "Préchargement: erreur ${status.errorMessage}"
             status.complete ->
-                "Tampon complet: déplacement dans le film activé"
+                "Préchargement complet - navigation libre"
             status.convertingToDownload ->
                 "Conversion en téléchargement: ${formatBytes(status.downloadedBytes)}${totalSuffix(status.totalBytes)}"
-            else ->
-                "Tampon: ${formatBytes(status.aheadBytes)} d'avance - seek désactivé tant que le fichier est incomplet"
+            else -> {
+                val safePosition = safeBufferedPositionMs(player?.length ?: 0L)
+                if (safePosition > 0L) {
+                    "Préchargement: ${formatBytes(status.aheadBytes)} d'avance - seek disponible jusqu'à ${formatTime(safePosition)}"
+                } else {
+                    "Préchargement: ${formatBytes(status.aheadBytes)} d'avance - navigation limitée"
+                }
+            }
+        }
+        when {
+            status.errorMessage != null -> updateQualitySummary("Erreur préchargement", QualityState.ERROR)
+            status.complete -> updateQualitySummary("Préchargement OK", QualityState.GOOD)
+            status.aheadBytes > 0L -> updateQualitySummary("Précharge ${formatBytes(status.aheadBytes)}", QualityState.WARNING)
+        }
+        if (::playerHintView.isInitialized) {
+            playerHintView.text = if (status.complete) {
+                playerHintText()
+            } else {
+                "OK pause/lecture • ←/→ dans la zone préchargée • hors zone indisponible"
+            }
         }
     }
 
@@ -787,7 +1182,7 @@ class PlayerActivity : Activity() {
         val currentPlayer = player
         if (currentPlayer != null) {
             if (resumeEnabled) {
-                stateStore.saveResume(itemKey, currentPlayer.time)
+                stateStore.saveResume(itemKey, currentPlayer.time, currentPlayer.length)
             }
             currentPlayer.setEventListener(null)
             currentPlayer.stop()
@@ -805,10 +1200,30 @@ class PlayerActivity : Activity() {
         main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
     }
 
+    private fun playerHintText(): String =
+        if (preloadProxy && !PreloadStreamServer.isComplete()) {
+            "OK pause/lecture • ↑ boutons • ↓ barre • seek après préchargement complet"
+        } else {
+            "OK pause/lecture • ↑ boutons • ↓ barre • ← -15s / → +30s • maintenir pour avancer • Retour masque"
+        }
+
+    private fun compactQualityText(): String {
+        val track = player?.currentVideoTrack
+        return when {
+            lastPlaybackIssue.isNotBlank() -> "Erreur flux"
+            preloadProxy && !PreloadStreamServer.isComplete() -> "Préchargement actif"
+            track != null && track.width > 0 && track.height > 0 -> "${track.width}p"
+            playbackStarted -> "Flux OK"
+            lastBufferingPercent > 0f -> String.format(Locale.US, "Buffer %.0f%%", lastBufferingPercent)
+            else -> "Qualité"
+        }
+    }
+
     private fun focusAdjacentTopButton(direction: Int) {
         if (topControlButtons.isEmpty()) {
             return
         }
+        topControlsActive = true
         val currentIndex = topControlButtons.indexOf(currentFocus)
         val nextIndex = when {
             currentIndex < 0 -> 0
@@ -819,11 +1234,34 @@ class PlayerActivity : Activity() {
         main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
     }
 
+    private fun isNavigatingTopControls(): Boolean =
+        controlsVisible && (topControlsActive || topControlButtons.contains(currentFocus))
+
+    private fun cancelPendingScrub() {
+        if (!scrubActive) {
+            return
+        }
+        scrubActive = false
+        scrubDirection = 0
+        userSeeking = false
+        updateProgress()
+        main.removeCallbacks(hideSeekOverlayRunnable)
+        if (::seekOverlayView.isInitialized) {
+            seekOverlayView.visibility = View.GONE
+        }
+    }
+
     private fun setControlsVisible(visible: Boolean) {
         if (controlsVisible == visible && topBar.visibility == if (visible) View.VISIBLE else View.GONE) {
             return
         }
         controlsVisible = visible
+        if (visible && ::playerHintView.isInitialized) {
+            playerHintView.text = playerHintText()
+        }
+        if (!visible) {
+            topControlsActive = false
+        }
         val bars = listOf(topBar, bottomBar)
         if (visible) {
             bars.forEach { bar ->
@@ -851,9 +1289,10 @@ class PlayerActivity : Activity() {
             text = label
             isAllCaps = false
             setTextColor(Color.WHITE)
-            textSize = 14f
+            textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(12), 0, dp(12), 0)
+            setPadding(dp(8), 0, dp(8), 0)
+            minWidth = dp(58)
             minHeight = 0
             minimumHeight = 0
             background = roundStroke(PANEL, dp(9), STROKE, dp(1))
@@ -866,8 +1305,8 @@ class PlayerActivity : Activity() {
                     if (focused) ACCENT_FOCUS else STROKE,
                     dp(if (focused) 4 else 1)
                 )
-                view.scaleX = if (focused) 1.08f else 1f
-                view.scaleY = if (focused) 1.08f else 1f
+                view.scaleX = if (focused) 1.04f else 1f
+                view.scaleY = if (focused) 1.04f else 1f
                 view.elevation = dp(if (focused) 16 else 2).toFloat()
             }
             setOnTouchListener { view, event ->
@@ -892,9 +1331,93 @@ class PlayerActivity : Activity() {
         }
     }
 
+    private fun panelButton(label: String): Button =
+        controlButton(label).apply {
+            textSize = 13f
+            gravity = Gravity.CENTER
+            background = roundStroke(PANEL, dp(10), STROKE, dp(1))
+        }
+
+    private fun choiceButton(label: String, selected: Boolean): Button =
+        controlButton(label).apply {
+            textSize = 13f
+            gravity = Gravity.CENTER_VERTICAL
+            setSingleLine(true)
+            setPadding(dp(12), 0, dp(12), 0)
+            background = roundStroke(
+                if (selected) Color.rgb(31, 35, 60) else PANEL,
+                dp(9),
+                if (selected) ACCENT_2 else Color.argb(170, 97, 103, 137),
+                dp(if (selected) 2 else 1)
+            )
+            setOnFocusChangeListener { view, focused ->
+                view.background = roundStroke(
+                    when {
+                        focused -> PANEL_FOCUS
+                        selected -> Color.rgb(31, 35, 60)
+                        else -> PANEL
+                    },
+                    dp(9),
+                    when {
+                        focused -> ACCENT_FOCUS
+                        selected -> ACCENT_2
+                        else -> Color.argb(170, 97, 103, 137)
+                    },
+                    dp(if (focused || selected) 2 else 1)
+                )
+                view.scaleX = if (focused) 1.025f else 1f
+                view.scaleY = if (focused) 1.025f else 1f
+                view.elevation = dp(if (focused) 12 else 2).toFloat()
+            }
+        }
+
+    private fun updateQualitySummary(label: String, state: QualityState) {
+        if (!::qualityButton.isInitialized) {
+            return
+        }
+        qualityButton.text = qualityButtonText(label)
+        val stroke = when (state) {
+            QualityState.GOOD -> ACCENT_2
+            QualityState.WARNING -> ACCENT_FOCUS
+            QualityState.ERROR -> ERROR_ACCENT
+            QualityState.NEUTRAL -> STROKE
+        }
+        qualityButton.background = roundStroke(PANEL, dp(10), stroke, dp(if (state == QualityState.NEUTRAL) 1 else 2))
+        qualityButton.setTextColor(if (state == QualityState.ERROR) ERROR_TEXT else Color.WHITE)
+    }
+
+    private fun showPremiumTextDialog(title: String, message: String, compact: Boolean = false) {
+        val dialog = AlertDialog.Builder(this).create()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(16))
+            background = roundStroke(PLAYER_CHROME, dp(16), STROKE, dp(1))
+        }
+        root.addView(TextView(this).apply {
+            text = title
+            setTextColor(Color.WHITE)
+            textSize = 22f
+            typeface = Typeface.DEFAULT_BOLD
+        })
+        val content = TextView(this).apply {
+            text = message
+            setTextColor(0xFFE8EAFB.toInt())
+            textSize = 13f
+            setPadding(0, dp(12), 0, dp(12))
+        }
+        root.addView(ScrollView(this).apply { addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(panelButton("Fermer").apply { setOnClickListener { dialog.dismiss() } }, LinearLayout.LayoutParams(-1, dp(48)))
+        dialog.setView(root)
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+            dialog.window?.setLayout(dp(if (compact) 520 else 620), dp(if (compact) 440 else 560))
+        }
+        dialog.show()
+    }
+
     private fun buttonMargin(): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(-2, dp(44)).apply {
-            setMargins(dp(8), 0, 0, 0)
+        LinearLayout.LayoutParams(-2, dp(38)).apply {
+            setMargins(dp(5), 0, 0, 0)
         }
 
     private fun round(color: Int, radius: Int): GradientDrawable =
@@ -948,14 +1471,11 @@ class PlayerActivity : Activity() {
     }
 
     private fun enterImmersiveMode() {
-        window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-        window.decorView.systemUiVisibility =
-            View.SYSTEM_UI_FLAG_FULLSCREEN or
-                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.systemBars())
+        }
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
@@ -972,8 +1492,11 @@ class PlayerActivity : Activity() {
 
         private val PANEL = Color.rgb(18, 20, 36)
         private val PANEL_FOCUS = Color.rgb(43, 40, 79)
+        private val PLAYER_CHROME = Color.argb(218, 12, 14, 28)
         private val ACCENT_2 = Color.rgb(71, 211, 194)
-        private val ACCENT_FOCUS = Color.rgb(255, 209, 102)
+        private val ACCENT_FOCUS = Color.rgb(143, 162, 255)
+        private val ERROR_ACCENT = Color.rgb(255, 138, 154)
+        private val ERROR_TEXT = Color.rgb(255, 197, 205)
         private val STROKE = Color.rgb(51, 54, 86)
     }
 }

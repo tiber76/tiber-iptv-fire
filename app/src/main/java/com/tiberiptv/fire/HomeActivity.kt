@@ -17,6 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -84,6 +86,7 @@ class HomeActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        PreloadStreamServer.cleanupCache(this)
         homeViewModel = ViewModelProvider(this)[HomeViewModel::class.java]
         enterImmersiveMode()
         setContent {
@@ -214,14 +217,36 @@ private fun AppBackground(content: @Composable () -> Unit) {
             .background(
                 Brush.linearGradient(
                     listOf(
-                        Color(0xFF080B16),
-                        Color(0xFF11162A),
-                        Color(0xFF171326)
+                        Color(0xFF090B18),
+                        Color(0xFF161B3B),
+                        Color(0xFF101323)
                     )
                 )
             )
             .windowInsetsPadding(WindowInsets.navigationBars)
     ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0x553C63FF), Color.Transparent),
+                        center = androidx.compose.ui.geometry.Offset(260f, 120f),
+                        radius = 520f
+                    )
+                )
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0x4516D6C5), Color.Transparent),
+                        center = androidx.compose.ui.geometry.Offset(1180f, 620f),
+                        radius = 560f
+                    )
+                )
+        )
         content()
     }
 }
@@ -630,11 +655,12 @@ private fun HomeHubScreen(
     LaunchedEffect(Unit) {
         moviesFocusRequester.requestFocus()
     }
+    val refreshingMode = uiState.refreshingCatalogMode
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 42.dp, vertical = 20.dp),
+            .padding(horizontal = 38.dp, vertical = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(
@@ -687,57 +713,61 @@ private fun HomeHubScreen(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         NetworkProfileSelector(
             selectedProfile = uiState.networkProfile,
             onProfile = onNetworkProfile
         )
-        Spacer(Modifier.height(14.dp))
-        SectionLabel("Catalogue")
+        Spacer(Modifier.height(20.dp))
         Row(
             modifier = Modifier
                 .widthIn(max = 1180.dp)
                 .fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            PrimaryModeButton(
-                title = "Live",
-                subtitle = "Chaînes en direct",
-                loadedAt = uiState.liveCatalogLoadedAt,
-                refreshing = uiState.refreshingCatalogMode == Mode.LIVE.name,
-                accent = Color(0xFF47D3C2),
-                modifier = Modifier.weight(1f),
-                onRefresh = { onRefreshCatalog(Mode.LIVE) },
-                onClick = { onOpenMode("LIVE") }
-            )
             PrimaryModeButton(
                 title = "Films",
                 subtitle = "Catalogue VOD",
                 loadedAt = uiState.moviesCatalogLoadedAt,
-                refreshing = uiState.refreshingCatalogMode == Mode.MOVIES.name,
-                accent = Color(0xFFFFC857),
+                refreshing = refreshingMode == Mode.MOVIES.name,
+                refreshEnabled = refreshingMode == null,
+                accent = Color(0xFF16D6C5),
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(1.55f)
                     .focusRequester(moviesFocusRequester),
                 onRefresh = { onRefreshCatalog(Mode.MOVIES) },
                 onClick = { onOpenMode("MOVIES") }
             )
-            PrimaryModeButton(
-                title = "Séries",
-                subtitle = "Saisons et épisodes",
-                loadedAt = uiState.seriesCatalogLoadedAt,
-                refreshing = uiState.refreshingCatalogMode == Mode.SERIES.name,
-                accent = Color(0xFFFF7A90),
+            Column(
                 modifier = Modifier.weight(1f),
-                onRefresh = { onRefreshCatalog(Mode.SERIES) },
-                onClick = { onOpenMode("SERIES") }
-            )
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CompactModeButton(
+                    title = "Live",
+                    subtitle = "Chaînes en direct",
+                    loadedAt = uiState.liveCatalogLoadedAt,
+                    refreshing = refreshingMode == Mode.LIVE.name,
+                    refreshEnabled = refreshingMode == null,
+                    accent = Color(0xFF8FA2FF),
+                    onRefresh = { onRefreshCatalog(Mode.LIVE) },
+                    onClick = { onOpenMode("LIVE") }
+                )
+                CompactModeButton(
+                    title = "Séries",
+                    subtitle = "Saisons et épisodes",
+                    loadedAt = uiState.seriesCatalogLoadedAt,
+                    refreshing = refreshingMode == Mode.SERIES.name,
+                    refreshEnabled = refreshingMode == null,
+                    accent = Color(0xFFFF5F87),
+                    onRefresh = { onRefreshCatalog(Mode.SERIES) },
+                    onClick = { onOpenMode("SERIES") }
+                )
+            }
         }
-        Spacer(Modifier.height(12.dp))
-        SectionLabel("Bibliothèque et application")
+        Spacer(Modifier.height(18.dp))
         Row(
             modifier = Modifier
-                .widthIn(max = 820.dp)
+                .widthIn(max = 1180.dp)
                 .fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -748,8 +778,8 @@ private fun HomeHubScreen(
                 onClick = { onOpenMode("FAVORITES") }
             )
             SecondaryHomeButton(
-                label = "Local",
-                subtitle = "Téléchargements",
+                label = "Téléchargés",
+                subtitle = "Films et séries hors ligne",
                 modifier = Modifier.weight(1f),
                 onClick = { onOpenMode("DOWNLOADS") }
             )
@@ -837,7 +867,7 @@ private fun AccountCard(
     onSelect: () -> Unit,
     onRemove: () -> Unit
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(14.dp)
     var focused by remember { mutableStateOf(false) }
     val focusScale by animateFloatAsState(
         targetValue = if (focused) 1.025f else 1f,
@@ -986,7 +1016,7 @@ private fun HomeProfileButton(
 ) {
     val accent = networkProfileAccent(profile)
     var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(14.dp)
     val focusScale by animateFloatAsState(
         targetValue = if (focused) 1.025f else 1f,
         label = "homeProfileFocusScale"
@@ -1049,13 +1079,15 @@ private fun PrimaryModeButton(
     subtitle: String,
     loadedAt: Long,
     refreshing: Boolean,
+    refreshEnabled: Boolean,
     accent: Color,
     modifier: Modifier = Modifier,
     onRefresh: () -> Unit,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(14.dp)
     var focused by remember { mutableStateOf(false) }
+    val openInteractionSource = remember { MutableInteractionSource() }
     val focusScale by animateFloatAsState(
         targetValue = if (focused) 1.025f else 1f,
         label = "primaryModeFocusScale"
@@ -1063,7 +1095,6 @@ private fun PrimaryModeButton(
 
     Surface(
         modifier = modifier
-            .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
                 scaleX = focusScale
                 scaleY = focusScale
@@ -1074,78 +1105,223 @@ private fun PrimaryModeButton(
                 color = if (focused) TvFocusColor else Color(0xFF343956),
                 shape = shape
             )
-            .height(138.dp)
-            .clip(shape)
-            .clickable(onClick = onClick)
-            .focusable(),
+            .height(252.dp)
+            .clip(shape),
         shape = shape,
         color = if (focused) TvFocusSurface else Color(0xFF171B2E),
+        contentColor = Color.White
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(if (focused) Color(0xFF20243A) else Color(0xFF171B2E))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(end = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(22.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(7.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(accent)
+                )
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(14.dp))
+                        .onFocusChanged { focused = it.isFocused }
+                        .clickable(
+                            interactionSource = openInteractionSource,
+                            indication = null,
+                            onClick = onClick
+                        )
+                        .focusable(),
+                    horizontalAlignment = Alignment.Start,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = title,
+                        color = Color(0xFFF7F5FF),
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = subtitle,
+                        color = Color(0xFFD8DCF7),
+                        style = MaterialTheme.typography.titleLarge,
+                        textAlign = TextAlign.Start,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "Chargé: ${formatCatalogLoadedAt(loadedAt)}",
+                        color = Color(0xFF9EA7CD),
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    HomeRefreshButton(
+                        refreshing = refreshing,
+                        enabled = refreshEnabled && !refreshing,
+                        accent = accent,
+                        onClick = onRefresh
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactModeButton(
+    title: String,
+    subtitle: String,
+    loadedAt: Long,
+    refreshing: Boolean,
+    refreshEnabled: Boolean,
+    accent: Color,
+    onRefresh: () -> Unit,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(14.dp)
+    var focused by remember { mutableStateOf(false) }
+    val openInteractionSource = remember { MutableInteractionSource() }
+    val focusScale by animateFloatAsState(
+        targetValue = if (focused) 1.025f else 1f,
+        label = "compactModeFocusScale"
+    )
+
+    Surface(
+        modifier = Modifier
+            .height(120.dp)
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = focusScale
+                scaleY = focusScale
+                shadowElevation = if (focused) 12f else 0f
+            }
+            .border(
+                width = if (focused) 3.dp else 1.dp,
+                color = if (focused) TvFocusColor else Color(0xFF343956),
+                shape = shape
+            )
+            .clip(shape),
+        shape = shape,
+        color = if (focused) TvFocusSurface else Color(0xFF151827),
         contentColor = Color.White
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
+                .background(if (focused) Color(0xFF20243A) else Color(0xFF151827))
                 .padding(end = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(18.dp)
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .widthIn(min = 5.dp)
+                    .width(5.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .background(accent)
             )
             Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.Start,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(14.dp))
+                    .onFocusChanged { focused = it.isFocused }
+                    .clickable(
+                        interactionSource = openInteractionSource,
+                        indication = null,
+                        onClick = onClick
+                    )
+                    .focusable(),
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
                     text = title,
                     color = Color(0xFFF7F5FF),
-                    style = MaterialTheme.typography.headlineSmall,
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Black,
                     maxLines = 1
                 )
                 Text(
                     text = subtitle,
                     color = Color(0xFFD8DCF7),
-                    style = MaterialTheme.typography.titleMedium,
-                    textAlign = TextAlign.Start,
-                    maxLines = 2,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "Chargé: ${formatCatalogLoadedAt(loadedAt)}",
+                    text = formatCatalogLoadedAt(loadedAt),
                     color = Color(0xFF9EA7CD),
                     style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1
+                )
+            }
+            HomeRefreshButton(
+                refreshing = refreshing,
+                enabled = refreshEnabled && !refreshing,
+                accent = accent,
+                compact = true,
+                onClick = onRefresh
+            )
+        }
+    }
+}
+
+@Composable
+private fun HomeRefreshButton(
+    refreshing: Boolean,
+    enabled: Boolean,
+    accent: Color,
+    compact: Boolean = false,
+    onClick: () -> Unit
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .width(if (compact) 132.dp else 144.dp)
+            .height(if (compact) 34.dp else 38.dp),
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = accent,
+            disabledContentColor = if (refreshing) Color.White else Color(0xFF757A9B)
+        ),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+    ) {
+        if (refreshing) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SignalLoader(sizeDp = if (compact) 18 else 20, compact = true)
+                Text(
+                    "Rechargement...",
+                    style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onRefresh,
-                    enabled = !refreshing,
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = accent)
-                ) {
-                    if (refreshing) {
-                        SignalLoader(sizeDp = 22, compact = true)
-                    } else {
-                        Text("Recharger")
-                    }
-                }
-                Text(
-                    text = "OK",
-                    color = if (focused) TvFocusColor else Color(0xFF72799E),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+        } else {
+            Text(
+                "Recharger",
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1
+            )
         }
     }
 }
@@ -1157,7 +1333,7 @@ private fun SecondaryHomeButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(14.dp)
     var focused by remember { mutableStateOf(false) }
     val focusScale by animateFloatAsState(
         targetValue = if (focused) 1.025f else 1f,

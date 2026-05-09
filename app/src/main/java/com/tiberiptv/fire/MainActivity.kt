@@ -1976,23 +1976,23 @@ private fun DetailScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(28.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+                .padding(horizontal = 22.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        DetailActionButton(label = "Retour", onClick = onBack, modifier = Modifier.width(116.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(22.dp), modifier = Modifier.fillMaxSize()) {
+        DetailActionButton(label = "Retour", onClick = onBack, modifier = Modifier.width(94.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.fillMaxSize()) {
             PosterWithBadges(
                 item = item,
                 qualityHint = state.selectedQualityHint,
                 ratingOverride = state.selectedDetail?.rating,
                 favorite = isFavorite,
-                modifier = Modifier.width(220.dp).aspectRatio(2f / 3f)
+                modifier = Modifier.width(186.dp).aspectRatio(2f / 3f)
             )
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Text(
                     item.title,
                     color = Color.White,
-                    style = MaterialTheme.typography.headlineLarge,
+                    style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Black,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -2060,8 +2060,14 @@ private fun DetailScreen(
                         StoragePanel(state, onClearImageCache)
                     }
                     val detail = state.selectedDetail
-                    if (detail != null && detail.hasContent()) {
-                        DetailInfoPanel(detailText(detail))
+                    if (detail != null) {
+                        val extraDetail = compactDetailText(detail)
+                        if (detail.plot.isNotBlank() || extraDetail.isNotBlank()) {
+                            DetailInfoPanel(
+                                synopsis = detail.plot,
+                                extra = extraDetail
+                            )
+                        }
                     }
                     val series = state.seriesInfo
                     if (series != null) {
@@ -2088,7 +2094,7 @@ private fun DetailScreen(
 }
 
 @Composable
-private fun DetailInfoPanel(text: String) {
+private fun DetailInfoPanel(synopsis: String, extra: String) {
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = Color(0xAA161B2F),
@@ -2100,16 +2106,25 @@ private fun DetailInfoPanel(text: String) {
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "Détails",
+                text = "Synopsis",
                 color = Color(0xFF47D3C2),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Black
             )
-            Text(
-                text = text,
-                color = Color(0xFFF4F5FF),
-                style = MaterialTheme.typography.bodyLarge
-            )
+            if (synopsis.isNotBlank()) {
+                Text(
+                    text = synopsis,
+                    color = Color(0xFFF4F5FF),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            if (extra.isNotBlank()) {
+                Text(
+                    text = extra,
+                    color = Color(0xFFC9C6E4),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
     }
 }
@@ -2123,11 +2138,14 @@ private fun DetailMetaPills(
     favorite: Boolean
 ) {
     val detail = state.selectedDetail
+    val typeLabel = metaLabel(item)
     FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        DetailMetaPill(metaLabel(item))
+        if (typeLabel.isNotBlank()) {
+            DetailMetaPill(typeLabel)
+        }
         displayRating(detail?.rating, item.rating)?.let { rating ->
             DetailMetaPill("★ $rating", accent = Color(0xFFFFD166), foreground = Color(0xFF191100))
         }
@@ -2161,14 +2179,14 @@ private fun DetailMetaPill(
     Text(
         text = text,
         color = foreground,
-        style = MaterialTheme.typography.labelLarge,
+        style = MaterialTheme.typography.labelMedium,
         fontWeight = FontWeight.Bold,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
             .background(accent)
-            .padding(horizontal = 12.dp, vertical = 7.dp)
+            .padding(horizontal = 10.dp, vertical = 5.dp)
     )
 }
 
@@ -2199,19 +2217,19 @@ private fun DetailActionGroup(
     title: String? = null,
     content: @Composable () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         if (!title.isNullOrBlank()) {
             Text(
                 text = title,
                 color = Color(0xFFC9C6E4),
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold
             )
         }
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             content()
         }
@@ -2236,8 +2254,8 @@ private fun DetailActionButton(
     }
     Surface(
         modifier = modifier
-            .height(38.dp)
-            .widthIn(min = 104.dp, max = 190.dp)
+            .height(34.dp)
+            .widthIn(min = 86.dp, max = 164.dp)
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
                 scaleX = if (focused) 1.025f else 1f
@@ -2270,7 +2288,7 @@ private fun DetailActionButton(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 14.dp),
+                .padding(horizontal = 10.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
@@ -2281,7 +2299,7 @@ private fun DetailActionButton(
                     destructive -> Color(0xFFFFC5CD)
                     else -> Color.White
                 },
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -3207,14 +3225,11 @@ private fun downloadedSize(context: Context, item: XtreamModels.StreamItem): Lon
 private fun safeFileName(value: String): String =
     value.replace(Regex("[^A-Za-z0-9._-]+"), "_").trim('_').ifEmpty { "video" }
 
-private fun detailText(detail: XtreamModels.ItemDetail): String {
+private fun compactDetailText(detail: XtreamModels.ItemDetail): String {
     val parts = mutableListOf<String>()
-    if (detail.plot.isNotBlank()) parts.add(detail.plot)
-    if (detail.genre.isNotBlank()) parts.add("Genre: ${detail.genre}")
-    if (detail.duration.isNotBlank()) parts.add("Durée: ${detail.duration}")
     if (detail.cast.isNotBlank()) parts.add("Casting: ${detail.cast}")
     if (detail.director.isNotBlank()) parts.add("Réalisation: ${detail.director}")
-    return parts.joinToString("\n\n")
+    return parts.joinToString("\n")
 }
 
 private fun formatBytes(bytes: Long): String {

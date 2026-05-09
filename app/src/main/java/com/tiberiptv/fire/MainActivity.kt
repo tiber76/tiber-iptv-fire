@@ -253,6 +253,8 @@ class MainActivity : ComponentActivity() {
 
 private val TvFocusOutline = Color(0xFF8FA2FF)
 private val TvFocusSurface = Color(0xFF242842)
+private const val TOP_RATED_MONTH_SECONDS = 31L * 24L * 60L * 60L
+private const val TOP_RATED_SIX_MONTHS_SECONDS = 183L * 24L * 60L * 60L
 
 private object ViewModelHolder {
     var current: MainViewModel? = null
@@ -1285,11 +1287,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .filter { (rowTitle, item) -> isUltraHd(item, rowTitle) }
             .map { (_, item) -> item }
             .take(20)
-        val topRated = allItems
-            .map { (_, item) -> item }
-            .filter { item -> numericRating(item.rating) >= 7f }
-            .sortedByDescending { item -> numericRating(item.rating) }
-            .take(20)
+        val nowSeconds = System.currentTimeMillis() / 1_000L
+        val topRatedMonth = topRatedSince(allItems, nowSeconds - TOP_RATED_MONTH_SECONDS)
+        val topRatedSixMonths = topRatedSince(allItems, nowSeconds - TOP_RATED_SIX_MONTHS_SECONDS)
         val recent = allItems
             .map { (_, item) -> item }
             .filter { item -> item.addedTimestamp.toLongOrNull() != null }
@@ -1300,9 +1300,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addPremiumRow(PremiumRowKind.HISTORY, "Continuer à regarder", history)
             addPremiumRow(PremiumRowKind.FAVORITES, "Mes favoris", favorites)
             addPremiumRow(PremiumRowKind.FOUR_K, "Sélection 4K", fourK)
-            addPremiumRow(PremiumRowKind.TOP_RATED, "Top notes", topRated)
+            addPremiumRow(PremiumRowKind.TOP_RATED, "Top notes du mois", topRatedMonth)
+            addPremiumRow(PremiumRowKind.TOP_RATED, "Top notes 6 derniers mois", topRatedSixMonths)
             addPremiumRow(PremiumRowKind.RECENT, "Ajoutés récemment", recent)
         }
+    }
+
+    private fun topRatedSince(
+        allItems: List<Pair<String, XtreamModels.StreamItem>>,
+        minAddedEpochSeconds: Long
+    ): List<XtreamModels.StreamItem> =
+        allItems
+            .map { (_, item) -> item }
+            .filter { item ->
+                val added = addedEpochSeconds(item)
+                added >= minAddedEpochSeconds && numericRating(item.rating) >= 7f
+            }
+            .sortedWith(
+                compareByDescending<XtreamModels.StreamItem> { numericRating(it.rating) }
+                    .thenByDescending { addedEpochSeconds(it) }
+            )
+            .take(20)
+
+    private fun addedEpochSeconds(item: XtreamModels.StreamItem): Long {
+        val raw = item.addedTimestamp.toLongOrNull() ?: return 0L
+        return if (raw > 9_999_999_999L) raw / 1_000L else raw
     }
 
     private fun historyForMode(mode: Mode): List<XtreamModels.StreamItem> =

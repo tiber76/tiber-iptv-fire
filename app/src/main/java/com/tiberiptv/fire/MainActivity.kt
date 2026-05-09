@@ -1707,6 +1707,7 @@ private fun CatalogScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ContentRow(
     row: XtreamModels.ContentRow,
@@ -1729,7 +1730,12 @@ private fun ContentRow(
             rowState.scrollToItem(restoreIndex)
         }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+    val rowBringIntoViewRequester = remember { BringIntoViewRequester() }
+    val rowScope = rememberCoroutineScope()
+    Column(
+        modifier = Modifier.bringIntoViewRequester(rowBringIntoViewRequester),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
         Text(
             visibleTitle,
             color = if (premium) Color(0xFFF3F5FF) else Color.White,
@@ -1756,6 +1762,12 @@ private fun ContentRow(
                     favorite = favoriteKeys.contains(item.key()),
                     restoreFocus = item.key() == restoreItemKey,
                     onRestoreConsumed = onRestoreConsumed,
+                    onFocused = {
+                        rowScope.launch {
+                            delay(70L)
+                            rowBringIntoViewRequester.bringIntoView()
+                        }
+                    },
                     onClick = { onOpenItem(item) },
                     onLongClick = { onToggleFavorite(item) }
                 )
@@ -1873,6 +1885,7 @@ private fun ContentCard(
     favorite: Boolean = false,
     restoreFocus: Boolean = false,
     onRestoreConsumed: () -> Unit = {},
+    onFocused: () -> Unit = {},
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
@@ -1917,6 +1930,7 @@ private fun ContentCard(
             .focusRequester(focusRequester)
             .onFocusChanged { focusState ->
                 if (focusState.isFocused) {
+                    onFocused()
                     scope.launch {
                         delay(80L)
                         bringIntoViewRequester.bringIntoView()

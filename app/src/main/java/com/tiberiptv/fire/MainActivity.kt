@@ -1,15 +1,12 @@
 package com.tiberiptv.fire
 
 import android.app.Application
-import android.app.Activity
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.StatFs
 import android.os.SystemClock
-import android.speech.RecognizerIntent
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
@@ -18,7 +15,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -121,20 +117,6 @@ import kotlin.math.max
 import kotlin.math.min
 
 class MainActivity : ComponentActivity() {
-    private val voiceSearchLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode != Activity.RESULT_OK) {
-            return@registerForActivityResult
-        }
-        val spokenText = result.data
-            ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-            ?.firstOrNull()
-            ?.trim()
-            .orEmpty()
-        if (spokenText.isNotEmpty()) {
-            ViewModelHolder.current?.setQuery(spokenText)
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enterImmersiveMode()
@@ -159,7 +141,6 @@ class MainActivity : ComponentActivity() {
                     onToggleFilterHighRating = viewModel::toggleFilterHighRating,
                     onToggleFilterRecentYear = viewModel::toggleFilterRecentYear,
                     onCatalogSort = viewModel::setCatalogSort,
-                    onVoiceSearch = ::startVoiceSearch,
                     onOpenItem = viewModel::openItem,
                     onBackToCatalog = viewModel::closeDetail,
                     onToggleFavorite = viewModel::toggleFavorite,
@@ -242,20 +223,6 @@ class MainActivity : ComponentActivity() {
                 .putExtra(TrailerActivity.EXTRA_TRAILER, trailer)
                 .putExtra(TrailerActivity.EXTRA_REMOTE_GUARD_LABEL, "bande-annonce")
         )
-    }
-
-    private fun startVoiceSearch() {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Rechercher un film, une série ou une chaîne")
-            .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-
-        try {
-            voiceSearchLauncher.launch(intent)
-        } catch (_: ActivityNotFoundException) {
-            Toast.makeText(this, "Recherche vocale indisponible sur cet appareil.", Toast.LENGTH_LONG).show()
-        }
     }
 
     @Suppress("DEPRECATION")
@@ -1452,7 +1419,6 @@ private fun MainRoute(
     onToggleFilterHighRating: () -> Unit,
     onToggleFilterRecentYear: () -> Unit,
     onCatalogSort: (CatalogSort) -> Unit,
-    onVoiceSearch: () -> Unit,
     onOpenItem: (XtreamModels.StreamItem) -> Unit,
     onBackToCatalog: () -> Unit,
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit,
@@ -1535,7 +1501,6 @@ private fun MainRoute(
                     onToggleFilterHighRating = onToggleFilterHighRating,
                     onToggleFilterRecentYear = onToggleFilterRecentYear,
                     onCatalogSort = onCatalogSort,
-                    onVoiceSearch = onVoiceSearch,
                     onOpenItem = { item ->
                         restoreItemKey = item.key()
                         onOpenItem(item)
@@ -1566,7 +1531,6 @@ private fun CatalogScreen(
     onToggleFilterHighRating: () -> Unit,
     onToggleFilterRecentYear: () -> Unit,
     onCatalogSort: (CatalogSort) -> Unit,
-    onVoiceSearch: () -> Unit,
     onOpenItem: (XtreamModels.StreamItem) -> Unit,
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit,
     onClearImageCache: () -> Unit,
@@ -1626,7 +1590,6 @@ private fun CatalogScreen(
                 modifier = Modifier.width(300.dp),
                 onClick = { searchDialogVisible = true }
             )
-            CatalogHeaderButton(label = "Micro", modifier = Modifier.width(82.dp), onClick = onVoiceSearch)
         }
         if (searchDialogVisible) {
             SearchDialog(
@@ -2786,7 +2749,7 @@ private fun TvSearchButton(
                 style = MaterialTheme.typography.labelSmall
             )
             Text(
-                text = query.ifBlank { "OK pour saisir, ou Micro pour dicter" },
+                text = query.ifBlank { "OK pour saisir" },
                 color = if (query.isBlank()) Color(0xFFC9C6E4) else Color.White,
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,

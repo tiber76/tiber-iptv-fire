@@ -774,11 +774,8 @@ class PlayerActivity : Activity() {
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
             dialog.window?.setDimAmount(0.18f)
-            dialog.window?.setGravity(Gravity.END or Gravity.CENTER_VERTICAL)
+            dialog.window?.setGravity(Gravity.CENTER)
             dialog.window?.setLayout(dp(360), -2)
-            dialog.window?.attributes = dialog.window?.attributes?.apply {
-                x = dp(22)
-            }
             list.getChildAt(selectedIndex.coerceIn(0, choices.lastIndex))?.requestFocus()
             enterImmersiveMode()
         }

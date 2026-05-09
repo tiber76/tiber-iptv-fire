@@ -2291,6 +2291,7 @@ private fun DetailScreen(
     val isPreloading = state.preloadingItem?.key() == item.key()
     val isFavorite = state.favoriteKeys.contains(item.key())
     val isDownloaded = state.selectedDownloaded || state.mode == Mode.DOWNLOADS
+    val playFocusRequester = remember { FocusRequester() }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -2342,9 +2343,16 @@ private fun DetailScreen(
                     val hasResume = state.selectedResumePositionMs > PlaybackPolicy.RESUME_THRESHOLD_MS
                     val trailer = state.selectedDetail?.trailer.orEmpty()
                     val showFavoriteAction = !isDownloaded
+                    LaunchedEffect(item.key(), canPlay) {
+                        if (canPlay) {
+                            delay(120L)
+                            playFocusRequester.requestFocus()
+                        }
+                    }
                     DetailActionGroup {
                         DetailActionButton(
                             label = if (hasResume) "Reprendre" else "Lire",
+                            modifier = Modifier.focusRequester(playFocusRequester),
                             enabled = canPlay,
                             primary = true,
                             onClick = { onPlay(item) }

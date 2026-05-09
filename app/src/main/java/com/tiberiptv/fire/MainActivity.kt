@@ -1594,6 +1594,7 @@ private fun MainRoute(
     val catalogListState = rememberLazyListState()
     val rowListStates = remember { mutableStateMapOf<String, LazyListState>() }
     var restoreItemKey by remember { mutableStateOf<String?>(null) }
+    var restoreRowTitle by remember { mutableStateOf<String?>(null) }
     var catalogInitialFocusRequested by remember { mutableStateOf(false) }
 
     BackHandler(enabled = state.settingsVisible || state.selectedItem != null) {
@@ -1656,8 +1657,9 @@ private fun MainRoute(
                     onToggleFilterRecentYear = onToggleFilterRecentYear,
                     onClearCatalogFilters = onClearCatalogFilters,
                     onCatalogSort = onCatalogSort,
-                    onOpenItem = { item ->
+                    onOpenItem = { item, rowTitle ->
                         restoreItemKey = item.key()
+                        restoreRowTitle = rowTitle
                         onOpenItem(item)
                     },
                     onToggleFavorite = onToggleFavorite,
@@ -1666,7 +1668,11 @@ private fun MainRoute(
                     onSettings = onSettings,
                     rowListStates = rowListStates,
                     restoreItemKey = restoreItemKey,
-                    onRestoreConsumed = { restoreItemKey = null },
+                    restoreRowTitle = restoreRowTitle,
+                    onRestoreConsumed = {
+                        restoreItemKey = null
+                        restoreRowTitle = null
+                    },
                     listState = catalogListState,
                     requestInitialFocus = !catalogInitialFocusRequested,
                     onInitialFocusRequested = { catalogInitialFocusRequested = true }
@@ -1687,13 +1693,14 @@ private fun CatalogScreen(
     onToggleFilterRecentYear: () -> Unit,
     onClearCatalogFilters: () -> Unit,
     onCatalogSort: (CatalogSort) -> Unit,
-    onOpenItem: (XtreamModels.StreamItem) -> Unit,
+    onOpenItem: (XtreamModels.StreamItem, String) -> Unit,
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit,
     onClearImageCache: () -> Unit,
     onHome: () -> Unit,
     onSettings: () -> Unit,
     rowListStates: MutableMap<String, LazyListState>,
     restoreItemKey: String?,
+    restoreRowTitle: String?,
     onRestoreConsumed: () -> Unit,
     listState: LazyListState,
     requestInitialFocus: Boolean,
@@ -1873,6 +1880,27 @@ private fun CatalogScreen(
                         sort = state.catalogSort
                     )
                 }
+                val restoreRowIndex = remember(rows, restoreItemKey, restoreRowTitle) {
+                    restoreItemKey?.let { key ->
+                        rows.indexOfFirst { row ->
+                            row.title == restoreRowTitle && row.items.any { item -> item.key() == key }
+                        }.takeIf { index -> index >= 0 }
+                            ?: rows.indexOfFirst { row -> row.items.any { item -> item.key() == key } }
+                    } ?: -1
+                }
+                val effectiveRestoreRowTitle = remember(rows, restoreRowIndex) {
+                    rows.getOrNull(restoreRowIndex)?.title
+                }
+                LaunchedEffect(restoreItemKey, restoreRowIndex) {
+                    if (restoreItemKey == null) {
+                        return@LaunchedEffect
+                    }
+                    if (restoreRowIndex >= 0) {
+                        listState.scrollToItem(restoreRowIndex)
+                    } else {
+                        onRestoreConsumed()
+                    }
+                }
                 if (rows.isEmpty()) {
                     PremiumEmptyState(
                         title = if (state.query.isBlank()) "Aucun contenu" else "Aucun résultat",
@@ -1903,8 +1931,9 @@ private fun CatalogScreen(
                                 favoriteKeys = state.favoriteKeys,
                                 rowState = rowState,
                                 restoreItemKey = restoreItemKey,
+                                restoreRowTitle = effectiveRestoreRowTitle,
                                 onRestoreConsumed = onRestoreConsumed,
-                                onOpenItem = onOpenItem,
+                                onOpenItem = { item -> onOpenItem(item, row.title) },
                                 onToggleFavorite = onToggleFavorite
                             )
                         }
@@ -1963,6 +1992,7 @@ private fun ContentRow(
     favoriteKeys: Set<String>,
     rowState: LazyListState,
     restoreItemKey: String?,
+    restoreRowTitle: String?,
     onRestoreConsumed: () -> Unit,
     onOpenItem: (XtreamModels.StreamItem) -> Unit,
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit
@@ -1970,8 +2000,11 @@ private fun ContentRow(
     val visibleTitle = displayRowTitle(row.title)
     val rowKind = premiumRowKind(row.title)
     val premium = rowKind != null
-    val restoreIndex = remember(row.items, restoreItemKey) {
-        restoreItemKey?.let { key -> row.items.indexOfFirst { item -> item.key() == key } } ?: -1
+    val restoreIndex = remember(row.title, row.items, restoreItemKey, restoreRowTitle) {
+        restoreItemKey
+            ?.takeIf { restoreRowTitle == row.title }
+            ?.let { key -> row.items.indexOfFirst { item -> item.key() == key } }
+            ?: -1
     }
     LaunchedEffect(restoreIndex) {
         if (restoreIndex >= 0) {

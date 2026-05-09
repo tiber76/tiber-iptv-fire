@@ -181,7 +181,10 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         enterImmersiveMode()
-        ViewModelHolder.current?.cleanupBufferedPlaybackIfIdle()
+        ViewModelHolder.current?.let { viewModel ->
+            viewModel.cleanupBufferedPlaybackIfIdle()
+            viewModel.refreshSelectedPlaybackStateSoon()
+        }
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -970,6 +973,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             PreloadStreamServer.stop()
             RemoteActionGuard.release(RemoteLabels.BUFFER)
+        }
+    }
+
+    fun refreshSelectedPlaybackStateSoon() {
+        refreshSelectedPlaybackState()
+        viewModelScope.launch {
+            delay(300L)
+            refreshSelectedPlaybackState()
+        }
+    }
+
+    private fun refreshSelectedPlaybackState() {
+        val item = _uiState.value.selectedItem ?: return
+        val local = localFile(item)
+        val resumePosition = stateStore.resumePosition(item)
+        _uiState.update { state ->
+            if (state.selectedItem?.key() != item.key()) {
+                state
+            } else {
+                state.copy(
+                    selectedResumePositionMs = resumePosition,
+                    selectedDownloaded = local.isFile,
+                    selectedSizeBytes = if (local.isFile) local.length() else state.selectedSizeBytes
+                )
+            }
         }
     }
 

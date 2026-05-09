@@ -16,8 +16,8 @@ android {
         applicationId "com.tiberiptv.fire"
         minSdk 25
         targetSdk 35
-        versionCode 23
-        versionName "0.2.0-poc12"
+        versionCode 24
+        versionName "0.2.0-poc13"
         if (!firestickAbis.isEmpty()) {
             ndk {
                 abiFilters.addAll(firestickAbis)

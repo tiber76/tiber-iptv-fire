@@ -1092,7 +1092,6 @@ private fun PrimaryModeButton(
 
     Surface(
         modifier = modifier
-            .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
                 scaleX = focusScale
                 scaleY = focusScale
@@ -1104,9 +1103,7 @@ private fun PrimaryModeButton(
                 shape = shape
             )
             .height(252.dp)
-            .clip(shape)
-            .clickable(onClick = onClick)
-            .focusable(),
+            .clip(shape),
         shape = shape,
         color = if (focused) TvFocusSurface else Color(0xFF171B2E),
         contentColor = Color.White
@@ -1139,7 +1136,13 @@ private fun PrimaryModeButton(
                         .background(accent)
                 )
                 Column(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(8.dp))
+                        .onFocusChanged { focused = it.isFocused }
+                        .clickable(onClick = onClick)
+                        .focusable(),
                     horizontalAlignment = Alignment.Start,
                     verticalArrangement = Arrangement.Center
                 ) {
@@ -1210,7 +1213,6 @@ private fun CompactModeButton(
         modifier = Modifier
             .height(120.dp)
             .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
                 scaleX = focusScale
                 scaleY = focusScale
@@ -1221,9 +1223,7 @@ private fun CompactModeButton(
                 color = if (focused) TvFocusColor else Color(0xFF343956),
                 shape = shape
             )
-            .clip(shape)
-            .clickable(onClick = onClick)
-            .focusable(),
+            .clip(shape),
         shape = shape,
         color = if (focused) TvFocusSurface else Color(0xFF151827),
         contentColor = Color.White
@@ -1251,7 +1251,13 @@ private fun CompactModeButton(
                     .background(accent)
             )
             Column(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(8.dp))
+                    .onFocusChanged { focused = it.isFocused }
+                    .clickable(onClick = onClick)
+                    .focusable(),
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(

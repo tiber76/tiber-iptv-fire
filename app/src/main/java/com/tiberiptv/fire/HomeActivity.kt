@@ -86,6 +86,7 @@ class HomeActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        PreloadStreamServer.cleanupCache(this)
         homeViewModel = ViewModelProvider(this)[HomeViewModel::class.java]
         enterImmersiveMode()
         setContent {

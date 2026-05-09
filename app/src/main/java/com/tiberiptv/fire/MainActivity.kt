@@ -122,6 +122,7 @@ import kotlin.math.min
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        PreloadStreamServer.cleanupCache(this)
         enterImmersiveMode()
         setContent {
             TiberTheme {
@@ -143,6 +144,7 @@ class MainActivity : ComponentActivity() {
                     onToggleFilter4k = viewModel::toggleFilter4k,
                     onToggleFilterHighRating = viewModel::toggleFilterHighRating,
                     onToggleFilterRecentYear = viewModel::toggleFilterRecentYear,
+                    onClearCatalogFilters = viewModel::clearCatalogFilters,
                     onCatalogSort = viewModel::setCatalogSort,
                     onOpenItem = viewModel::openItem,
                     onBackToCatalog = viewModel::closeDetail,
@@ -607,6 +609,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleFilterRecentYear() {
         _uiState.update { it.copy(filterRecentYear = !it.filterRecentYear) }
+    }
+
+    fun clearCatalogFilters() {
+        _uiState.update {
+            it.copy(
+                filter4k = false,
+                filterHighRating = false,
+                filterRecentYear = false,
+                catalogSort = CatalogSort.RECENT
+            )
+        }
     }
 
     fun setCatalogSort(sort: CatalogSort) {
@@ -1526,6 +1539,7 @@ private fun MainRoute(
     onToggleFilter4k: () -> Unit,
     onToggleFilterHighRating: () -> Unit,
     onToggleFilterRecentYear: () -> Unit,
+    onClearCatalogFilters: () -> Unit,
     onCatalogSort: (CatalogSort) -> Unit,
     onOpenItem: (XtreamModels.StreamItem) -> Unit,
     onBackToCatalog: () -> Unit,
@@ -1608,6 +1622,7 @@ private fun MainRoute(
                     onToggleFilter4k = onToggleFilter4k,
                     onToggleFilterHighRating = onToggleFilterHighRating,
                     onToggleFilterRecentYear = onToggleFilterRecentYear,
+                    onClearCatalogFilters = onClearCatalogFilters,
                     onCatalogSort = onCatalogSort,
                     onOpenItem = { item ->
                         restoreItemKey = item.key()
@@ -1638,6 +1653,7 @@ private fun CatalogScreen(
     onToggleFilter4k: () -> Unit,
     onToggleFilterHighRating: () -> Unit,
     onToggleFilterRecentYear: () -> Unit,
+    onClearCatalogFilters: () -> Unit,
     onCatalogSort: (CatalogSort) -> Unit,
     onOpenItem: (XtreamModels.StreamItem) -> Unit,
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit,
@@ -1667,6 +1683,8 @@ private fun CatalogScreen(
         var searchDialogVisible by remember { mutableStateOf(false) }
         var filtersExpanded by remember { mutableStateOf(false) }
         val activeFilterCount = activeCatalogFilterCount(state)
+        val hasCustomSort = state.catalogSort != CatalogSort.RECENT
+        val hasCatalogControls = activeFilterCount > 0 || hasCustomSort
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1724,9 +1742,16 @@ private fun CatalogScreen(
                     label = if (activeFilterCount > 0) "Filtres $activeFilterCount" else "Filtres"
                 )
                 TvChip(
-                    selected = state.catalogSort != CatalogSort.RECENT,
+                    selected = hasCustomSort,
                     onClick = { onCatalogSort(state.catalogSort.next()) },
                     label = "Tri ${state.catalogSort.label}"
+                )
+            }
+            if (!filtersExpanded && hasCatalogControls) {
+                ActiveCatalogControlSummary(
+                    state = state,
+                    activeFilterCount = activeFilterCount,
+                    onClear = onClearCatalogFilters
                 )
             }
             if (filtersExpanded) {
@@ -1749,6 +1774,15 @@ private fun CatalogScreen(
                             onClick = { onCatalogSort(sort) },
                             label = "Tri ${sort.label}"
                         )
+                    }
+                    if (hasCatalogControls) {
+                        item {
+                            TvChip(
+                                selected = false,
+                                onClick = onClearCatalogFilters,
+                                label = "Réinitialiser"
+                            )
+                        }
                     }
                 }
             }
@@ -1837,6 +1871,38 @@ private fun CatalogScreen(
 
 private fun activeCatalogFilterCount(state: MainUiState): Int =
     listOf(state.filter4k, state.filterHighRating, state.filterRecentYear).count { it }
+
+@Composable
+private fun ActiveCatalogControlSummary(
+    state: MainUiState,
+    activeFilterCount: Int,
+    onClear: () -> Unit
+) {
+    val labels = buildList {
+        if (state.filter4k) add("4K")
+        if (state.filterHighRating) add("Note 7+")
+        if (state.filterRecentYear) add("Année récente")
+        if (state.catalogSort != CatalogSort.RECENT) add("Tri ${state.catalogSort.label}")
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = labels.joinToString(" • "),
+            color = Color(0xFF47D3C2),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (activeFilterCount > 0 || state.catalogSort != CatalogSort.RECENT) {
+            CatalogHeaderButton(label = "Réinitialiser", modifier = Modifier.width(104.dp), onClick = onClear)
+        }
+    }
+}
 
 private fun CatalogSort.next(): CatalogSort {
     val values = CatalogSort.entries

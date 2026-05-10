@@ -727,7 +727,7 @@ private fun HomeHubScreen(
                 )
                 PremiumMiniSectionButton(
                     title = "Séries",
-                    subtitle = "Saisons et épisodes",
+                    subtitle = "${formatHomeCount(uiState.seriesItemCount)} séries",
                     loadedAt = uiState.seriesCatalogLoadedAt,
                     refreshing = refreshingMode == Mode.SERIES.name,
                     refreshEnabled = refreshingMode == null,

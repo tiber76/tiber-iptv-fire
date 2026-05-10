@@ -1755,8 +1755,8 @@ private fun CatalogScreen(
                 .clip(RoundedCornerShape(14.dp))
                 .background(Color(0xB0161830))
                 .border(1.dp, Color(0xFF303656), RoundedCornerShape(14.dp))
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(horizontal = 9.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -1796,25 +1796,13 @@ private fun CatalogScreen(
                         onClick = { onMode(mode) }
                     )
                 }
-            }
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(Color(0xFF2B3150))
-            )
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                contentPadding = PaddingValues(horizontal = 3.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusGroup()
-            ) {
+                item("catalog-tools-separator") {
+                    CatalogControlSeparator()
+                }
                 item("search") {
                     TvSearchButton(
                         query = state.query,
-                        modifier = Modifier.width(178.dp),
+                        modifier = Modifier.width(166.dp),
                         onClick = { searchDialogVisible = true }
                     )
                 }
@@ -2223,19 +2211,19 @@ private fun ContentCard(
     }
     val meta = cardMeta(item, localSize, resumeMeta)
     val cardWidth = when {
-        compact -> 152.dp
-        premium -> 152.dp
-        else -> 134.dp
+        compact -> 146.dp
+        premium -> 146.dp
+        else -> 128.dp
     }
     val cardHeight = when {
-        compact -> 154.dp
-        premium -> 292.dp
-        else -> 270.dp
+        compact -> 148.dp
+        premium -> 280.dp
+        else -> 258.dp
     }
     val posterHeight = when {
-        compact -> 82.dp
-        premium -> 218.dp
-        else -> 196.dp
+        compact -> 78.dp
+        premium -> 208.dp
+        else -> 186.dp
     }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val focusRequester = remember { FocusRequester() }
@@ -3265,7 +3253,7 @@ private fun CatalogHeaderButton(
     val shape = RoundedCornerShape(999.dp)
     Surface(
         modifier = modifier
-            .height(29.dp)
+            .height(28.dp)
             .widthIn(min = 68.dp)
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
@@ -3373,7 +3361,7 @@ private fun TvSearchButton(
 ) {
     varFocusedSurface(
         modifier = modifier
-            .height(30.dp)
+            .height(28.dp)
             .clickable(onClick = onClick)
             .focusable(),
         shape = RoundedCornerShape(10.dp)
@@ -3540,8 +3528,8 @@ private fun StorageMetricRow(label: String, bytes: Long) {
 private fun CatalogControlSeparator() {
     Box(
         modifier = Modifier
-            .height(30.dp)
-            .padding(horizontal = 5.dp),
+            .height(28.dp)
+            .padding(horizontal = 4.dp),
         contentAlignment = Alignment.Center
     ) {
         Box(
@@ -3557,7 +3545,7 @@ private fun CatalogControlSeparator() {
 private fun TvChip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     varFocusedSurface(
         modifier = modifier
-            .height(30.dp)
+            .height(28.dp)
             .clickable(onClick = onClick)
             .focusable(),
         selected = selected,

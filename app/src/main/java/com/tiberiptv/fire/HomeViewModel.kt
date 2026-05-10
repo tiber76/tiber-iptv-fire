@@ -73,18 +73,20 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshCatalogDates() {
         viewModelScope.launch {
-            val dates = withContext(Dispatchers.IO) {
-                CatalogDates(
+            val snapshot = withContext(Dispatchers.IO) {
+                HomeResumeSnapshot(
                     live = stateStore.cacheSavedAt(Mode.LIVE.name),
                     movies = stateStore.cacheSavedAt(Mode.MOVIES.name),
-                    series = stateStore.cacheSavedAt(Mode.SERIES.name)
+                    series = stateStore.cacheSavedAt(Mode.SERIES.name),
+                    networkProfile = stateStore.networkProfile()
                 )
             }
             _uiState.update {
                 it.copy(
-                    liveCatalogLoadedAt = dates.live,
-                    moviesCatalogLoadedAt = dates.movies,
-                    seriesCatalogLoadedAt = dates.series
+                    liveCatalogLoadedAt = snapshot.live,
+                    moviesCatalogLoadedAt = snapshot.movies,
+                    seriesCatalogLoadedAt = snapshot.series,
+                    networkProfile = snapshot.networkProfile
                 )
             }
         }
@@ -327,10 +329,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         private const val STARTUP_LOADER_MS = 1_500L
     }
 
-    private data class CatalogDates(
+    private data class HomeResumeSnapshot(
         val live: Long,
         val movies: Long,
-        val series: Long
+        val series: Long,
+        val networkProfile: NetworkProfile
     )
 
     private data class StartupState(

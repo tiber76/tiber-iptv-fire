@@ -3,6 +3,13 @@ package com.tiberiptv.fire
 import androidx.compose.runtime.Immutable
 
 @Immutable
+data class HomeHeroItem(
+    val title: String = "",
+    val type: String = "",
+    val progressLabel: String = ""
+)
+
+@Immutable
 data class HomeUiState(
     val appStarting: Boolean = true,
     val server: String = "",
@@ -15,6 +22,12 @@ data class HomeUiState(
     val liveCatalogLoadedAt: Long = 0L,
     val moviesCatalogLoadedAt: Long = 0L,
     val seriesCatalogLoadedAt: Long = 0L,
+    val liveItemCount: Int = 0,
+    val movieItemCount: Int = 0,
+    val seriesItemCount: Int = 0,
+    val favoriteItemCount: Int = 0,
+    val downloadedItemCount: Int = 0,
+    val heroItem: HomeHeroItem? = null,
     val refreshingCatalogMode: String? = null,
     val networkProfile: NetworkProfile = NetworkProfile.NORMAL,
     val loading: Boolean = false,

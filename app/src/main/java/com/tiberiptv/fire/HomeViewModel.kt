@@ -38,9 +38,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                         networkProfile = stateStore.networkProfile()
                     )
                 }
+                val snapshot = localHomeSnapshot()
                 StartupState(
                     credentials = credentials,
                     accounts = credentialStore.accounts(),
+                    heroItem = snapshot.heroItem,
+                    favoriteCount = snapshot.favoriteCount,
+                    downloadCount = snapshot.downloadCount,
                     networkProfile = stateStore.networkProfile()
                 )
             }
@@ -50,7 +54,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     accountServer = startupState.credentials?.serverUrl.orEmpty(),
                     activeAccountId = activeAccountId(startupState.credentials, startupState.accounts),
                     accounts = startupState.accounts,
-                    networkProfile = startupState.networkProfile
+                    networkProfile = startupState.networkProfile,
+                    heroItem = startupState.heroItem,
+                    favoriteItemCount = startupState.favoriteCount,
+                    downloadedItemCount = startupState.downloadCount
                 )
             }
             if (startupState.credentials?.isComplete() == true) {
@@ -74,18 +81,19 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshCatalogDates() {
         viewModelScope.launch {
             val snapshot = withContext(Dispatchers.IO) {
-                HomeResumeSnapshot(
-                    live = stateStore.cacheSavedAt(Mode.LIVE.name),
-                    movies = stateStore.cacheSavedAt(Mode.MOVIES.name),
-                    series = stateStore.cacheSavedAt(Mode.SERIES.name),
-                    networkProfile = stateStore.networkProfile()
-                )
+                localHomeSnapshot()
             }
             _uiState.update {
                 it.copy(
                     liveCatalogLoadedAt = snapshot.live,
                     moviesCatalogLoadedAt = snapshot.movies,
                     seriesCatalogLoadedAt = snapshot.series,
+                    liveItemCount = snapshot.liveCount,
+                    movieItemCount = snapshot.movieCount,
+                    seriesItemCount = snapshot.seriesCount,
+                    favoriteItemCount = snapshot.favoriteCount,
+                    downloadedItemCount = snapshot.downloadCount,
+                    heroItem = snapshot.heroItem,
                     networkProfile = snapshot.networkProfile
                 )
             }
@@ -190,6 +198,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 accountServer = credentials.serverUrl,
                 activeAccountId = activeAccountId(credentials, accounts),
                 accounts = accounts,
+                networkProfile = stateStore.networkProfile(),
                 statusMessage = "Compte actif: ${credentials.username}",
                 errorMessage = null
             )
@@ -209,6 +218,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 accountServer = if (hasActiveAccount) credentials.serverUrl else "",
                 activeAccountId = activeAccountId(credentials, accounts),
                 accounts = accounts,
+                networkProfile = stateStore.networkProfile(),
                 statusMessage = if (hasActiveAccount) "Compte retiré. Compte actif: ${credentials.username}" else "Compte retiré.",
                 errorMessage = null
             )
@@ -274,6 +284,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                         errorMessage = null
                     )
                 }
+                refreshCatalogDates()
             } catch (exception: Exception) {
                 _uiState.update {
                     it.copy(
@@ -325,6 +336,40 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         return rows
     }
 
+    private fun localHomeSnapshot(): HomeResumeSnapshot {
+        val recent = stateStore.history(
+            setOf(
+                XtreamModels.StreamItem.TYPE_MOVIE,
+                XtreamModels.StreamItem.TYPE_SERIES,
+                XtreamModels.StreamItem.TYPE_EPISODE
+            ),
+            1
+        ).firstOrNull()
+        return HomeResumeSnapshot(
+            live = stateStore.cacheSavedAt(Mode.LIVE.name),
+            movies = stateStore.cacheSavedAt(Mode.MOVIES.name),
+            series = stateStore.cacheSavedAt(Mode.SERIES.name),
+            liveCount = stateStore.cachedItemCount(Mode.LIVE.name),
+            movieCount = stateStore.cachedItemCount(Mode.MOVIES.name),
+            seriesCount = stateStore.cachedItemCount(Mode.SERIES.name),
+            favoriteCount = stateStore.favorites().size,
+            downloadCount = stateStore.downloads().size,
+            heroItem = recent?.let { item ->
+                HomeHeroItem(
+                    title = item.title,
+                    type = item.type,
+                    progressLabel = resumeProgressLabel(stateStore.resumePosition(item))
+                )
+            },
+            networkProfile = stateStore.networkProfile()
+        )
+    }
+
+    private fun resumeProgressLabel(positionMs: Long): String {
+        val minutes = positionMs / 60_000L
+        return if (minutes > 0L) "Reprendre à ${minutes} min" else "Reprendre la lecture"
+    }
+
     private companion object {
         private const val STARTUP_LOADER_MS = 1_500L
     }
@@ -333,12 +378,21 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         val live: Long,
         val movies: Long,
         val series: Long,
+        val liveCount: Int,
+        val movieCount: Int,
+        val seriesCount: Int,
+        val favoriteCount: Int,
+        val downloadCount: Int,
+        val heroItem: HomeHeroItem?,
         val networkProfile: NetworkProfile
     )
 
     private data class StartupState(
         val credentials: XtreamModels.Credentials?,
         val accounts: List<AccountSummary>,
+        val heroItem: HomeHeroItem? = null,
+        val favoriteCount: Int = 0,
+        val downloadCount: Int = 0,
         val networkProfile: NetworkProfile
     )
 

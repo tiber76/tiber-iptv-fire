@@ -653,11 +653,12 @@ private fun HomeHubScreen(
     onOpenMode: (String) -> Unit,
     onOpenSettings: () -> Unit
 ) {
-    val moviesFocusRequester = remember { FocusRequester() }
+    val heroFocusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
-        moviesFocusRequester.requestFocus()
+        heroFocusRequester.requestFocus()
     }
     val refreshingMode = uiState.refreshingCatalogMode
+    val heroMode = homeHeroMode(uiState.heroItem)
 
     Column(
         modifier = Modifier
@@ -727,34 +728,32 @@ private fun HomeHubScreen(
                 .fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            PrimaryModeButton(
-                title = "Films",
-                subtitle = "Catalogue VOD",
-                loadedAt = uiState.moviesCatalogLoadedAt,
-                refreshing = refreshingMode == Mode.MOVIES.name,
-                refreshEnabled = refreshingMode == null,
-                accent = Color(0xFF16D6C5),
+            HomeHeroCard(
+                heroItem = uiState.heroItem,
+                moviesCount = uiState.movieItemCount,
+                seriesCount = uiState.seriesItemCount,
+                liveCount = uiState.liveItemCount,
+                networkProfile = uiState.networkProfile,
                 modifier = Modifier
-                    .weight(1.55f)
-                    .focusRequester(moviesFocusRequester),
-                onRefresh = { onRefreshCatalog(Mode.MOVIES) },
-                onClick = { onOpenMode("MOVIES") }
+                    .weight(1.45f)
+                    .focusRequester(heroFocusRequester),
+                onClick = { onOpenMode(heroMode) }
             )
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                CompactModeButton(
-                    title = "Live",
-                    subtitle = "Chaînes en direct",
-                    loadedAt = uiState.liveCatalogLoadedAt,
-                    refreshing = refreshingMode == Mode.LIVE.name,
+                PremiumMiniSectionButton(
+                    title = "Films",
+                    subtitle = "${formatHomeCount(uiState.movieItemCount)} en cache",
+                    loadedAt = uiState.moviesCatalogLoadedAt,
+                    refreshing = refreshingMode == Mode.MOVIES.name,
                     refreshEnabled = refreshingMode == null,
-                    accent = Color(0xFF8FA2FF),
-                    onRefresh = { onRefreshCatalog(Mode.LIVE) },
-                    onClick = { onOpenMode("LIVE") }
+                    accent = Color(0xFF16D6C5),
+                    onRefresh = { onRefreshCatalog(Mode.MOVIES) },
+                    onClick = { onOpenMode("MOVIES") }
                 )
-                CompactModeButton(
+                PremiumMiniSectionButton(
                     title = "Séries",
                     subtitle = "Saisons et épisodes",
                     loadedAt = uiState.seriesCatalogLoadedAt,
@@ -763,6 +762,16 @@ private fun HomeHubScreen(
                     accent = Color(0xFFFF5F87),
                     onRefresh = { onRefreshCatalog(Mode.SERIES) },
                     onClick = { onOpenMode("SERIES") }
+                )
+                PremiumMiniSectionButton(
+                    title = "Live",
+                    subtitle = "${formatHomeCount(uiState.liveItemCount)} chaînes",
+                    loadedAt = uiState.liveCatalogLoadedAt,
+                    refreshing = refreshingMode == Mode.LIVE.name,
+                    refreshEnabled = refreshingMode == null,
+                    accent = Color(0xFF8FA2FF),
+                    onRefresh = { onRefreshCatalog(Mode.LIVE) },
+                    onClick = { onOpenMode("LIVE") }
                 )
             }
         }
@@ -775,13 +784,13 @@ private fun HomeHubScreen(
         ) {
             SecondaryHomeButton(
                 label = "Mes favoris",
-                subtitle = "Films et séries marqués",
+                subtitle = "${uiState.favoriteItemCount} contenu(s)",
                 modifier = Modifier.weight(1f),
                 onClick = { onOpenMode("FAVORITES") }
             )
             SecondaryHomeButton(
                 label = "Téléchargés",
-                subtitle = "Films et séries hors ligne",
+                subtitle = "${uiState.downloadedItemCount} hors ligne",
                 modifier = Modifier.weight(1f),
                 onClick = { onOpenMode("DOWNLOADS") }
             )
@@ -790,6 +799,233 @@ private fun HomeHubScreen(
                 subtitle = "Réseau et lecteur",
                 modifier = Modifier.weight(1f),
                 onClick = onOpenSettings
+            )
+        }
+    }
+}
+
+private fun homeHeroMode(heroItem: HomeHeroItem?): String =
+    when (heroItem?.type) {
+        XtreamModels.StreamItem.TYPE_SERIES,
+        XtreamModels.StreamItem.TYPE_EPISODE -> "SERIES"
+        else -> "MOVIES"
+    }
+
+private fun formatHomeCount(count: Int): String =
+    count.coerceAtLeast(0).toString()
+
+@Composable
+private fun HomeHeroCard(
+    heroItem: HomeHeroItem?,
+    moviesCount: Int,
+    seriesCount: Int,
+    liveCount: Int,
+    networkProfile: NetworkProfile,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(16.dp)
+    var focused by remember { mutableStateOf(false) }
+    val focusScale by animateFloatAsState(
+        targetValue = if (focused) 1.01f else 1f,
+        label = "homeHeroFocusScale"
+    )
+    val hasResume = heroItem != null
+    Surface(
+        modifier = modifier
+            .height(208.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .graphicsLayer {
+                scaleX = focusScale
+                scaleY = focusScale
+                shadowElevation = if (focused) 12f else 2f
+            }
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) TvFocusColor else Color(0xFF343956),
+                shape = shape
+            )
+            .clip(shape)
+            .clickable(onClick = onClick)
+            .focusable(),
+        shape = shape,
+        color = if (focused) TvFocusSurface else Color(0xFF151827),
+        contentColor = Color.White
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.linearGradient(
+                        listOf(
+                            Color(0xFF18203C),
+                            Color(0xFF151827),
+                            Color(0xFF1A1530)
+                        )
+                    )
+                )
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                networkProfileAccent(networkProfile).copy(alpha = 0.30f),
+                                Color.Transparent
+                            ),
+                            center = androidx.compose.ui.geometry.Offset(780f, 60f),
+                            radius = 520f
+                        )
+                    )
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(86.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF47D3C2), Color(0xFF8E7BFF), Color(0xFFFF7A90))
+                            )
+                        )
+                        .border(1.dp, Color(0x99FFFFFF), RoundedCornerShape(24.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (hasResume) "▶" else "T",
+                        color = Color.White,
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = if (hasResume) "Continuer à regarder" else "Prêt à regarder",
+                        color = Color(0xFF47D3C2),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = heroItem?.title ?: "Films, séries et direct",
+                        color = Color.White,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = heroItem?.progressLabel
+                            ?: "${formatHomeCount(moviesCount)} films • ${formatHomeCount(seriesCount)} séries • ${formatHomeCount(liveCount)} chaînes",
+                        color = Color(0xFFD8DCF7),
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = if (hasResume) "OK pour ouvrir la bonne section" else "OK pour ouvrir les films",
+                        color = Color(0xFFAEB5D6),
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PremiumMiniSectionButton(
+    title: String,
+    subtitle: String,
+    loadedAt: Long,
+    refreshing: Boolean,
+    refreshEnabled: Boolean,
+    accent: Color,
+    onRefresh: () -> Unit,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(14.dp)
+    var focused by remember { mutableStateOf(false) }
+    val focusScale by animateFloatAsState(
+        targetValue = if (focused) 1.01f else 1f,
+        label = "premiumMiniSectionFocusScale"
+    )
+    Surface(
+        modifier = Modifier
+            .height(64.dp)
+            .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .graphicsLayer {
+                scaleX = focusScale
+                scaleY = focusScale
+                shadowElevation = if (focused) 8f else 0f
+            }
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) TvFocusColor else Color(0xFF343956),
+                shape = shape
+            )
+            .clip(shape),
+        shape = shape,
+        color = if (focused) TvFocusSurface else TvCardSurface,
+        contentColor = Color.White
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(if (focused) Color(0xFF20243A) else TvCardSurface)
+                .padding(end = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(5.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(accent)
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable(onClick = onClick)
+                    .focusable(),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(title, color = Color.White, fontWeight = FontWeight.Black, maxLines = 1)
+                Text(
+                    subtitle,
+                    color = Color(0xFFD8DCF7),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "Chargé: ${formatCatalogLoadedAt(loadedAt)}",
+                    color = Color(0xFF9EA7CD),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1
+                )
+            }
+            HomeRefreshButton(
+                refreshing = refreshing,
+                enabled = refreshEnabled && !refreshing,
+                accent = accent,
+                compact = true,
+                onClick = onRefresh
             )
         }
     }

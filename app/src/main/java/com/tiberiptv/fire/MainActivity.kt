@@ -1804,7 +1804,6 @@ private fun CatalogScreen(
                         )
                     }
                 }
-                CatalogControlSeparator()
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(7.dp),

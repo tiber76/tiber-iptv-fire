@@ -190,7 +190,6 @@ private fun HomeRoute(
                 onRefreshCatalog = onRefreshCatalog,
                 onNetworkProfile = onNetworkProfile,
                 onSelectAccount = onSelectAccount,
-                onRemoveAccount = onRemoveAccount,
                 onAddAccount = onAddAccount,
                 onOpenMode = onOpenMode,
                 onOpenSettings = onOpenSettings
@@ -649,7 +648,6 @@ private fun HomeHubScreen(
     onRefreshCatalog: (Mode) -> Unit,
     onNetworkProfile: (NetworkProfile) -> Unit,
     onSelectAccount: (String) -> Unit,
-    onRemoveAccount: (String) -> Unit,
     onAddAccount: () -> Unit,
     onOpenMode: (String) -> Unit,
     onOpenSettings: () -> Unit
@@ -664,48 +662,16 @@ private fun HomeHubScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 42.dp, vertical = 14.dp),
+            .padding(horizontal = 42.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(
-            modifier = Modifier
-                .widthIn(max = 1180.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
-            TiberLogoMark(animated = true, sizeDp = 48)
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Tiber IPTV",
-                    color = Color(0xFFF7F5FF),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Black,
-                    maxLines = 1
-                )
-                Text(
-                    text = "Choisir une section",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Color(0xFFD1D5F4),
-                    maxLines = 1
-                )
-                Text(
-                    text = "Connecté à $accountServer",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF47D3C2),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            AccountSwitcher(
-                accounts = uiState.accounts,
-                activeAccountId = uiState.activeAccountId,
-                compact = false,
-                onSelectAccount = onSelectAccount,
-                onRemoveAccount = onRemoveAccount,
-                onAddAccount = onAddAccount
-            )
-        }
+        PremiumHomeTopBar(
+            accountServer = accountServer,
+            accounts = uiState.accounts,
+            activeAccountId = uiState.activeAccountId,
+            onSelectAccount = onSelectAccount,
+            onAddAccount = onAddAccount
+        )
         val feedback = uiState.errorMessage ?: uiState.statusMessage
         if (refreshingMode != null) {
             HomeCatalogRefreshBanner(
@@ -727,7 +693,7 @@ private fun HomeHubScreen(
             selectedProfile = uiState.networkProfile,
             onProfile = onNetworkProfile
         )
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
         Row(
             modifier = Modifier
                 .widthIn(max = 1180.dp)
@@ -809,6 +775,205 @@ private fun HomeHubScreen(
         }
     }
 }
+
+@Composable
+private fun PremiumHomeTopBar(
+    accountServer: String,
+    accounts: List<AccountSummary>,
+    activeAccountId: String,
+    onSelectAccount: (String) -> Unit,
+    onAddAccount: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .widthIn(max = 1180.dp)
+            .fillMaxWidth()
+            .height(58.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        TiberLogoMark(animated = true, sizeDp = 42)
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = "Tiber IPTV",
+                color = Color(0xFFF7F5FF),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Black,
+                maxLines = 1
+            )
+            Text(
+                text = "Accueil TV",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFFD1D5F4),
+                maxLines = 1
+            )
+            Text(
+                text = compactServerLabel(accountServer),
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(0xFF47D3C2),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        HomeAccountStrip(
+            accounts = accounts,
+            activeAccountId = activeAccountId,
+            onSelectAccount = onSelectAccount,
+            onAddAccount = onAddAccount
+        )
+    }
+}
+
+@Composable
+private fun HomeAccountStrip(
+    accounts: List<AccountSummary>,
+    activeAccountId: String,
+    onSelectAccount: (String) -> Unit,
+    onAddAccount: () -> Unit
+) {
+    Row(
+        modifier = Modifier.widthIn(max = 520.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        accounts
+            .sortedByDescending { account -> account.id == activeAccountId }
+            .take(2)
+            .forEach { account ->
+                HomeAccountChip(
+                    account = account,
+                    active = account.id == activeAccountId,
+                    onClick = { onSelectAccount(account.id) }
+                )
+            }
+        HomeAddAccountChip(onClick = onAddAccount)
+    }
+}
+
+@Composable
+private fun HomeAccountChip(
+    account: AccountSummary,
+    active: Boolean,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(999.dp)
+    var focused by remember { mutableStateOf(false) }
+    val focusScale by animateFloatAsState(
+        targetValue = if (focused) 1.015f else 1f,
+        label = "homeAccountChipFocusScale"
+    )
+    Surface(
+        modifier = Modifier
+            .widthIn(min = 132.dp, max = 190.dp)
+            .height(42.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .graphicsLayer {
+                scaleX = focusScale
+                scaleY = focusScale
+                shadowElevation = if (focused) 8f else 0f
+            }
+            .border(
+                width = if (focused || active) 2.dp else 1.dp,
+                color = when {
+                    focused -> TvFocusColor
+                    active -> Color(0xFF47D3C2)
+                    else -> TvCardBorder
+                },
+                shape = shape
+            )
+            .clip(shape)
+            .clickable(onClick = onClick)
+            .focusable(),
+        shape = shape,
+        color = when {
+            focused -> TvFocusSurface
+            active -> Color(0xFF173336)
+            else -> Color(0xFF171B2E)
+        },
+        contentColor = Color.White
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFF47D3C2), Color(0xFF8E7BFF)))),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    account.username.take(1).uppercase(Locale.FRANCE).ifEmpty { "U" },
+                    color = Color(0xFF080B16),
+                    fontWeight = FontWeight.Black,
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (active) "Actif" else "Compte",
+                    color = if (active) Color(0xFF47D3C2) else Color(0xFFAEB5D6),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
+                )
+                Text(
+                    text = account.username,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeAddAccountChip(onClick: () -> Unit) {
+    val shape = RoundedCornerShape(999.dp)
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        modifier = Modifier
+            .width(90.dp)
+            .height(38.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) TvFocusColor else Color(0xFF4A4E75),
+                shape = shape
+            )
+            .clip(shape)
+            .clickable(onClick = onClick)
+            .focusable(),
+        shape = shape,
+        color = if (focused) TvFocusSurface else Color.Transparent,
+        contentColor = Color(0xFFBCA7FF)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                "Ajouter",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+private fun compactServerLabel(server: String): String =
+    server
+        .removePrefix("https://")
+        .removePrefix("http://")
+        .ifBlank { "Compte connecté" }
 
 @Composable
 private fun HomeCatalogRefreshBanner(message: String, accent: Color) {
@@ -1257,23 +1422,30 @@ private fun NetworkProfileSelector(
             .widthIn(max = 1180.dp)
             .fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
             "Profil réseau",
             color = Color(0xFFD8DCF7),
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
-            maxLines = 1
+            maxLines = 1,
+            modifier = Modifier.width(92.dp)
         )
         NetworkProfile.entries.forEach { profile ->
+            val profileWidth = when (profile) {
+                NetworkProfile.NORMAL -> 108.dp
+                NetworkProfile.VPN_UNSTABLE -> 216.dp
+                NetworkProfile.SLOW -> 166.dp
+            }
             HomeProfileButton(
                 profile = profile,
                 selected = selectedProfile == profile,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.width(profileWidth),
                 onClick = { onProfile(profile) }
             )
         }
+        Spacer(Modifier.weight(1f))
     }
 }
 
@@ -1286,19 +1458,19 @@ private fun HomeProfileButton(
 ) {
     val accent = networkProfileAccent(profile)
     var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(999.dp)
     val focusScale by animateFloatAsState(
-        targetValue = if (focused) 1.01f else 1f,
+        targetValue = if (focused) 1.008f else 1f,
         label = "homeProfileFocusScale"
     )
     Surface(
         modifier = modifier
-            .height(44.dp)
+            .height(36.dp)
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
                 scaleX = focusScale
                 scaleY = focusScale
-                shadowElevation = if (focused) 7f else 0f
+                shadowElevation = if (focused) 6f else 0f
             }
             .border(
                 width = if (focused) 2.dp else if (selected) 2.dp else 1.dp,
@@ -1323,13 +1495,14 @@ private fun HomeProfileButton(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 12.dp),
+                .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
             Text(
                 profile.label,
                 color = if (selected) accent else Color.White,
+                style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis

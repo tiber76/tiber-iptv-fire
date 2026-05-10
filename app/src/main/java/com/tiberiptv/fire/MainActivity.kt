@@ -1759,28 +1759,22 @@ private fun CatalogScreen(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = state.mode.label,
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(
-                    state.status,
-                    color = Color(0xFFC9C6E4),
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 180.dp)
-                )
-                CatalogHeaderButton(
-                    label = "Profil: ${state.networkProfile.label}",
-                    contentColor = networkProfileAccent(state.networkProfile),
-                    icon = null,
-                    onClick = onSettings,
-                    modifier = Modifier.width(188.dp)
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = state.mode.label,
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                    Text(
+                        catalogHeaderStatus(state.status),
+                        color = Color(0xFFC9C6E4),
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(94.dp), onClick = onHome)
                 CatalogHeaderButton(label = "Recharger", modifier = Modifier.width(124.dp), enabled = !state.loading, onClick = onRefresh)
                 CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(108.dp), onClick = onSettings)
@@ -1802,13 +1796,25 @@ private fun CatalogScreen(
                         onClick = { onMode(mode) }
                     )
                 }
-                item("catalog-tools-separator") {
-                    CatalogControlSeparator()
-                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(Color(0xFF2B3150))
+            )
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                contentPadding = PaddingValues(horizontal = 3.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusGroup()
+            ) {
                 item("search") {
                     TvSearchButton(
                         query = state.query,
-                        modifier = Modifier.width(168.dp),
+                        modifier = Modifier.width(178.dp),
                         onClick = { searchDialogVisible = true }
                     )
                 }
@@ -1979,6 +1985,13 @@ private fun CatalogScreen(
 
 private fun activeCatalogFilterCount(state: MainUiState): Int =
     listOf(state.filter4k, state.filterHighRating, state.filterRecentYear).count { it }
+
+private fun catalogHeaderStatus(status: String): String =
+    when (status) {
+        "Cache local" -> "Catalogue local disponible"
+        "Catalogue à jour" -> "Catalogue à jour"
+        else -> status.ifBlank { "Catalogue" }
+    }
 
 @Composable
 private fun ActiveCatalogControlSummary(
@@ -3380,7 +3393,7 @@ private fun TvSearchButton(
                 style = MaterialTheme.typography.labelSmall
             )
             Text(
-                text = query.ifBlank { "OK pour saisir" },
+                text = query.ifBlank { "Ouvrir" },
                 color = if (query.isBlank()) Color(0xFFC9C6E4) else Color.White,
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,

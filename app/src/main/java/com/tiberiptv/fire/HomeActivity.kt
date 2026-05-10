@@ -80,6 +80,8 @@ import java.util.Locale
 
 private val TvFocusColor = Color(0xFF8FA2FF)
 private val TvFocusSurface = Color(0xFF242842)
+private val TvCardSurface = Color(0xFF151827)
+private val TvCardBorder = Color(0xFF343956)
 
 class HomeActivity : ComponentActivity() {
     private lateinit var homeViewModel: HomeViewModel
@@ -660,7 +662,7 @@ private fun HomeHubScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 38.dp, vertical = 18.dp),
+            .padding(horizontal = 42.dp, vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(
@@ -670,18 +672,18 @@ private fun HomeHubScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            TiberLogoMark(animated = true, sizeDp = 58)
+            TiberLogoMark(animated = true, sizeDp = 48)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Tiber IPTV",
                     color = Color(0xFFF7F5FF),
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Black,
                     maxLines = 1
                 )
                 Text(
                     text = "Choisir une section",
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.bodyLarge,
                     color = Color(0xFFD1D5F4),
                     maxLines = 1
                 )
@@ -713,12 +715,12 @@ private fun HomeHubScreen(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
         NetworkProfileSelector(
             selectedProfile = uiState.networkProfile,
             onProfile = onNetworkProfile
         )
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(14.dp))
         Row(
             modifier = Modifier
                 .widthIn(max = 1180.dp)
@@ -764,7 +766,7 @@ private fun HomeHubScreen(
                 )
             }
         }
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(14.dp))
         Row(
             modifier = Modifier
                 .widthIn(max = 1180.dp)
@@ -805,11 +807,16 @@ private fun AccountSwitcher(
     if (accounts.isEmpty() && onAddAccount == null) {
         return
     }
-    Column(
-        modifier = Modifier
-            .widthIn(max = if (compact) 560.dp else 620.dp)
+    val accountModifier = if (compact) {
+        Modifier
+            .widthIn(max = 560.dp)
             .fillMaxWidth()
-            .padding(top = if (compact) 4.dp else 0.dp),
+            .padding(top = 4.dp)
+    } else {
+        Modifier.width(470.dp)
+    }
+    Column(
+        modifier = accountModifier,
         verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 6.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -974,35 +981,27 @@ private fun NetworkProfileSelector(
     selectedProfile: NetworkProfile,
     onProfile: (NetworkProfile) -> Unit
 ) {
-    Column(
+    Row(
         modifier = Modifier
-            .widthIn(max = 980.dp)
+            .widthIn(max = 1180.dp)
             .fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(
-                "Profil réseau actif",
-                color = Color.White,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+        Text(
+            "Profil réseau",
+            color = Color(0xFFD8DCF7),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+        NetworkProfile.entries.forEach { profile ->
+            HomeProfileButton(
+                profile = profile,
+                selected = selectedProfile == profile,
+                modifier = Modifier.weight(1f),
+                onClick = { onProfile(profile) }
             )
-            Text(
-                selectedProfile.label,
-                color = networkProfileAccent(selectedProfile),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Black
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-            NetworkProfile.entries.forEach { profile ->
-                HomeProfileButton(
-                    profile = profile,
-                    selected = selectedProfile == profile,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onProfile(profile) }
-                )
-            }
         }
     }
 }
@@ -1018,24 +1017,24 @@ private fun HomeProfileButton(
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(14.dp)
     val focusScale by animateFloatAsState(
-        targetValue = if (focused) 1.025f else 1f,
+        targetValue = if (focused) 1.01f else 1f,
         label = "homeProfileFocusScale"
     )
     Surface(
         modifier = modifier
-            .height(58.dp)
+            .height(44.dp)
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
                 scaleX = focusScale
                 scaleY = focusScale
-                shadowElevation = if (focused) 10f else 0f
+                shadowElevation = if (focused) 7f else 0f
             }
             .border(
-                width = if (focused) 3.dp else if (selected) 2.dp else 1.dp,
+                width = if (focused) 2.dp else if (selected) 2.dp else 1.dp,
                 color = when {
                     focused -> TvFocusColor
                     selected -> accent
-                    else -> Color(0xFF333656)
+                    else -> TvCardBorder
                 },
                 shape = shape
             )
@@ -1046,19 +1045,21 @@ private fun HomeProfileButton(
         color = when {
             focused -> TvFocusSurface
             selected -> Color(0xFF20273D)
-            else -> Color(0xFF171B2E)
+            else -> TvCardSurface
         },
         contentColor = Color.White
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
         ) {
-            Text(profile.label, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
             Text(
-                "Buffer ${profile.bufferMs / 1000}s - Live ${profile.liveFormat.uppercase(Locale.US)}",
-                color = Color(0xFFC9CDEB),
-                style = MaterialTheme.typography.bodySmall,
+                profile.label,
+                color = if (selected) accent else Color.White,
+                fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -1089,7 +1090,7 @@ private fun PrimaryModeButton(
     var focused by remember { mutableStateOf(false) }
     val openInteractionSource = remember { MutableInteractionSource() }
     val focusScale by animateFloatAsState(
-        targetValue = if (focused) 1.025f else 1f,
+        targetValue = if (focused) 1.01f else 1f,
         label = "primaryModeFocusScale"
     )
 
@@ -1098,30 +1099,30 @@ private fun PrimaryModeButton(
             .graphicsLayer {
                 scaleX = focusScale
                 scaleY = focusScale
-                shadowElevation = if (focused) 12f else 0f
+                shadowElevation = if (focused) 8f else 0f
             }
             .border(
-                width = if (focused) 3.dp else 1.dp,
-                color = if (focused) TvFocusColor else Color(0xFF343956),
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) TvFocusColor else TvCardBorder,
                 shape = shape
             )
-            .height(252.dp)
+            .height(208.dp)
             .clip(shape),
         shape = shape,
-        color = if (focused) TvFocusSurface else Color(0xFF171B2E),
+        color = if (focused) TvFocusSurface else TvCardSurface,
         contentColor = Color.White
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(if (focused) Color(0xFF20243A) else Color(0xFF171B2E))
+                .background(if (focused) Color(0xFF20243A) else TvCardSurface)
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(end = 16.dp),
+                    .padding(end = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(22.dp)
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Box(
                     modifier = Modifier
@@ -1148,14 +1149,14 @@ private fun PrimaryModeButton(
                     Text(
                         text = title,
                         color = Color(0xFFF7F5FF),
-                        style = MaterialTheme.typography.headlineLarge,
+                        style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Black,
                         maxLines = 1
                     )
                     Text(
                         text = subtitle,
                         color = Color(0xFFD8DCF7),
-                        style = MaterialTheme.typography.titleLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         textAlign = TextAlign.Start,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
@@ -1199,36 +1200,36 @@ private fun CompactModeButton(
     var focused by remember { mutableStateOf(false) }
     val openInteractionSource = remember { MutableInteractionSource() }
     val focusScale by animateFloatAsState(
-        targetValue = if (focused) 1.025f else 1f,
+        targetValue = if (focused) 1.01f else 1f,
         label = "compactModeFocusScale"
     )
 
     Surface(
         modifier = Modifier
-            .height(120.dp)
+            .height(98.dp)
             .fillMaxWidth()
             .graphicsLayer {
                 scaleX = focusScale
                 scaleY = focusScale
-                shadowElevation = if (focused) 12f else 0f
+                shadowElevation = if (focused) 8f else 0f
             }
             .border(
-                width = if (focused) 3.dp else 1.dp,
-                color = if (focused) TvFocusColor else Color(0xFF343956),
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) TvFocusColor else TvCardBorder,
                 shape = shape
             )
             .clip(shape),
         shape = shape,
-        color = if (focused) TvFocusSurface else Color(0xFF151827),
+        color = if (focused) TvFocusSurface else TvCardSurface,
         contentColor = Color.White
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .background(if (focused) Color(0xFF20243A) else Color(0xFF151827))
+                .background(if (focused) Color(0xFF20243A) else TvCardSurface)
                 .padding(end = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Box(
                 modifier = Modifier
@@ -1254,7 +1255,7 @@ private fun CompactModeButton(
                 Text(
                     text = title,
                     color = Color(0xFFF7F5FF),
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Black,
                     maxLines = 1
                 )
@@ -1295,8 +1296,8 @@ private fun HomeRefreshButton(
         onClick = onClick,
         enabled = enabled,
         modifier = Modifier
-            .width(if (compact) 132.dp else 144.dp)
-            .height(if (compact) 34.dp else 38.dp),
+            .width(if (compact) 118.dp else 128.dp)
+            .height(if (compact) 32.dp else 34.dp),
         colors = ButtonDefaults.outlinedButtonColors(
             contentColor = accent,
             disabledContentColor = if (refreshing) Color.White else Color(0xFF757A9B)
@@ -1319,11 +1320,11 @@ private fun HomeRefreshButton(
         } else {
             Text(
                 "Recharger",
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 1
-            )
-        }
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1
+        )
     }
+}
 }
 
 @Composable
@@ -1336,7 +1337,7 @@ private fun SecondaryHomeButton(
     val shape = RoundedCornerShape(14.dp)
     var focused by remember { mutableStateOf(false) }
     val focusScale by animateFloatAsState(
-        targetValue = if (focused) 1.025f else 1f,
+        targetValue = if (focused) 1.01f else 1f,
         label = "secondaryHomeFocusScale"
     )
 
@@ -1347,17 +1348,17 @@ private fun SecondaryHomeButton(
             .graphicsLayer {
                 scaleX = focusScale
                 scaleY = focusScale
-                shadowElevation = if (focused) 12f else 0f
+                shadowElevation = if (focused) 8f else 0f
             }
             .border(
-                width = if (focused) 3.dp else 1.dp,
-                color = if (focused) TvFocusColor else Color(0xFF343956),
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) TvFocusColor else TvCardBorder,
                 shape = shape
             )
-            .height(60.dp),
+            .height(56.dp),
         shape = shape,
         colors = ButtonDefaults.elevatedButtonColors(
-            containerColor = if (focused) TvFocusSurface else Color(0xFF151827),
+            containerColor = if (focused) TvFocusSurface else TvCardSurface,
             contentColor = Color.White
         )
     ) {

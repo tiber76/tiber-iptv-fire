@@ -96,6 +96,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -3404,9 +3405,11 @@ private fun SearchDialog(
     onDismiss: () -> Unit
 ) {
     var draft by remember(query) { mutableStateOf(query) }
-    val focusRequester = remember { FocusRequester() }
+    val searchButtonFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+        keyboardController?.hide()
+        searchButtonFocusRequester.requestFocus()
     }
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -3440,7 +3443,6 @@ private fun SearchDialog(
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .focusRequester(focusRequester)
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     SearchDialogActionButton(
@@ -3450,7 +3452,9 @@ private fun SearchDialog(
                             onSearch(draft)
                             onDismiss()
                         },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(searchButtonFocusRequester)
                     )
                     SearchDialogActionButton(
                         label = "Effacer",

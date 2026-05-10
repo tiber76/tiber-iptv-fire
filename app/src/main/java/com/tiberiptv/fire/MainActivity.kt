@@ -1780,40 +1780,46 @@ private fun CatalogScreen(
                 CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(108.dp), onClick = onSettings)
             }
             HeaderDownloadStatus(state)
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                contentPadding = PaddingValues(horizontal = 3.dp),
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .focusGroup()
+                    .focusGroup(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
             ) {
-                itemsIndexed(Mode.entries, key = { _, mode -> mode.name }) { index, mode ->
-                    TvChip(
-                        label = mode.label,
-                        selected = state.mode == mode,
-                        modifier = if (index == 1) Modifier.focusRequester(firstFocus) else Modifier,
-                        onClick = { onMode(mode) }
-                    )
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    contentPadding = PaddingValues(horizontal = 3.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusGroup()
+                ) {
+                    itemsIndexed(Mode.entries, key = { _, mode -> mode.name }) { index, mode ->
+                        TvChip(
+                            label = mode.label,
+                            selected = state.mode == mode,
+                            modifier = if (index == 1) Modifier.focusRequester(firstFocus) else Modifier,
+                            onClick = { onMode(mode) }
+                        )
+                    }
                 }
-                item("catalog-tools-separator") {
-                    CatalogControlSeparator()
-                }
-                item("search") {
+                CatalogControlSeparator()
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    modifier = Modifier.focusGroup()
+                ) {
                     TvSearchButton(
                         query = state.query,
                         modifier = Modifier.width(166.dp),
                         onClick = { searchDialogVisible = true }
                     )
-                }
-                item("filters") {
                     TvChip(
                         selected = filtersExpanded || activeFilterCount > 0,
                         onClick = { filtersExpanded = !filtersExpanded },
                         label = if (activeFilterCount > 0) "Filtres $activeFilterCount" else "Filtres"
                     )
-                }
-                item("sort") {
                     TvChip(
                         selected = hasCustomSort,
                         onClick = { onCatalogSort(state.catalogSort.next()) },

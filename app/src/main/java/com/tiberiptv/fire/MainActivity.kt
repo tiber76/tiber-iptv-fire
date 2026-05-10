@@ -22,6 +22,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -1745,6 +1746,7 @@ private fun CatalogScreen(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .focusGroup()
                 .clip(RoundedCornerShape(14.dp))
                 .background(Color(0xB0161830))
                 .border(1.dp, Color(0xFF303656), RoundedCornerShape(14.dp))
@@ -1783,7 +1785,9 @@ private fun CatalogScreen(
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 contentPadding = PaddingValues(horizontal = 3.dp),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusGroup()
             ) {
                 itemsIndexed(Mode.entries, key = { _, mode -> mode.name }) { index, mode ->
                     TvChip(
@@ -1829,7 +1833,9 @@ private fun CatalogScreen(
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                     contentPadding = PaddingValues(horizontal = 3.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusGroup()
                 ) {
                     item {
                         TvChip(selected = state.filter4k, onClick = onToggleFilter4k, label = "4K")
@@ -1936,6 +1942,7 @@ private fun CatalogScreen(
                         contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 18.dp),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .focusGroup()
                             .weight(1f)
                     ) {
                         items(
@@ -2030,10 +2037,8 @@ private fun ContentRow(
             rowState.scrollToItem(restoreIndex)
         }
     }
-    val rowBringIntoViewRequester = remember { BringIntoViewRequester() }
-    val rowScope = rememberCoroutineScope()
     Column(
-        modifier = Modifier.bringIntoViewRequester(rowBringIntoViewRequester),
+        modifier = Modifier.focusGroup(),
         verticalArrangement = Arrangement.spacedBy(7.dp)
     ) {
         Text(
@@ -2062,12 +2067,6 @@ private fun ContentRow(
                     favorite = favoriteKeys.contains(item.key()),
                     restoreFocus = item.key() == restoreItemKey,
                     onRestoreConsumed = onRestoreConsumed,
-                    onFocused = {
-                        rowScope.launch {
-                            delay(70L)
-                            rowBringIntoViewRequester.bringIntoView()
-                        }
-                    },
                     onClick = { onOpenItem(item) },
                     onLongClick = { onToggleFavorite(item) }
                 )
@@ -2199,19 +2198,19 @@ private fun ContentCard(
     }
     val meta = cardMeta(item, localSize, resumeMeta)
     val cardWidth = when {
-        compact -> 170.dp
-        premium -> 166.dp
-        else -> 150.dp
+        compact -> 160.dp
+        premium -> 158.dp
+        else -> 142.dp
     }
     val cardHeight = when {
-        compact -> 174.dp
-        premium -> 326.dp
-        else -> 304.dp
+        compact -> 164.dp
+        premium -> 306.dp
+        else -> 286.dp
     }
     val posterHeight = when {
-        compact -> 94.dp
-        premium -> 246.dp
-        else -> 224.dp
+        compact -> 88.dp
+        premium -> 230.dp
+        else -> 210.dp
     }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val focusRequester = remember { FocusRequester() }
@@ -2650,9 +2649,9 @@ private fun DetailActionButton(
             .widthIn(min = 96.dp, max = 232.dp)
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
-                scaleX = if (focused) 1.025f else 1f
-                scaleY = if (focused) 1.025f else 1f
-                shadowElevation = if (focused) 12f else 0f
+                scaleX = if (focused) 1.012f else 1f
+                scaleY = if (focused) 1.012f else 1f
+                shadowElevation = if (focused) 8f else 0f
             }
             .clip(shape)
             .clickable(enabled = enabled, onClick = onClick)
@@ -3569,9 +3568,9 @@ private fun varFocusedSurface(
         modifier = Modifier
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
-                scaleX = if (focused) 1.025f else 1f
-                scaleY = if (focused) 1.025f else 1f
-                shadowElevation = if (focused) 12f else 0f
+                scaleX = if (focused) 1.012f else 1f
+                scaleY = if (focused) 1.012f else 1f
+                shadowElevation = if (focused) 8f else 0f
             }
             .then(modifier),
         shape = shape,

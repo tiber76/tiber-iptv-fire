@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +18,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val stateStore by lazy { AppStateStore(application) }
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+    private var autoRefreshJob: Job? = null
 
     init {
         loadStartupState(application)
@@ -61,7 +63,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             if (startupState.credentials?.isComplete() == true) {
-                refreshCatalogDates()
+                refreshCatalogDates(autoRefreshStale = true)
             }
         }
     }
@@ -78,7 +80,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(password = value, statusMessage = null, errorMessage = null) }
     }
 
-    fun refreshCatalogDates() {
+    fun refreshCatalogDates(autoRefreshStale: Boolean = false) {
         viewModelScope.launch {
             val snapshot = withContext(Dispatchers.IO) {
                 localHomeSnapshot()
@@ -96,6 +98,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     heroItem = snapshot.heroItem,
                     networkProfile = snapshot.networkProfile
                 )
+            }
+            if (autoRefreshStale) {
+                maybeStartAutoRefresh(snapshot)
             }
         }
     }
@@ -147,7 +152,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                         accounts = accounts,
                         networkProfile = stateStore.networkProfile()
                     )
-                    refreshCatalogDates()
+                    refreshCatalogDates(autoRefreshStale = true)
                 } else {
                     _uiState.update {
                         it.copy(
@@ -203,7 +208,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 errorMessage = null
             )
         }
-        refreshCatalogDates()
+        refreshCatalogDates(autoRefreshStale = true)
     }
 
     fun removeAccount(accountId: String) {
@@ -224,7 +229,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         if (hasActiveAccount) {
-            refreshCatalogDates()
+            refreshCatalogDates(autoRefreshStale = true)
         }
     }
 
@@ -252,50 +257,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(errorMessage = "Synchronisation déjà en cours.") }
             return
         }
-        val label = "synchronisation ${mode.label}"
-        if (!RemoteActionGuard.tryAcquire(label)) {
-            _uiState.update {
-                it.copy(errorMessage = UserFacingMessages.remoteBusy("Rechargement du catalogue"))
-            }
-            return
-        }
-        _uiState.update {
-            it.copy(
-                refreshingCatalogMode = mode.name,
-                statusMessage = "Rechargement ${mode.label}...",
-                errorMessage = null
-            )
-        }
         viewModelScope.launch {
-            try {
-                val api = XtreamApi(credentials)
-                val rows = withContext(Dispatchers.IO) { fetchRows(api, mode) }
-                withContext(Dispatchers.IO) { stateStore.saveRows(mode.name, rows) }
-                val savedAt = withContext(Dispatchers.IO) { stateStore.cacheSavedAt(mode.name) }
-                _uiState.update {
-                    when (mode) {
-                        Mode.LIVE -> it.copy(liveCatalogLoadedAt = savedAt)
-                        Mode.MOVIES -> it.copy(moviesCatalogLoadedAt = savedAt)
-                        Mode.SERIES -> it.copy(seriesCatalogLoadedAt = savedAt)
-                        Mode.FAVORITES, Mode.DOWNLOADS -> it
-                    }.copy(
-                        refreshingCatalogMode = null,
-                        statusMessage = "${mode.label} à jour",
-                        errorMessage = null
-                    )
-                }
-                refreshCatalogDates()
-            } catch (exception: Exception) {
-                _uiState.update {
-                    it.copy(
-                        refreshingCatalogMode = null,
-                        statusMessage = null,
-                        errorMessage = "Rechargement ${mode.label} impossible: ${exception.message ?: exception.javaClass.simpleName}"
-                    )
-                }
-            } finally {
-                RemoteActionGuard.release(label)
-            }
+            runCatalogRefresh(credentials, mode, automatic = false)
         }
     }
 
@@ -336,6 +299,140 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         return rows
     }
 
+    private fun maybeStartAutoRefresh(snapshot: HomeResumeSnapshot) {
+        if (autoRefreshJob?.isActive == true || _uiState.value.refreshingCatalogMode != null) {
+            return
+        }
+        val staleModes = staleCatalogModes(snapshot)
+        if (staleModes.isEmpty()) {
+            return
+        }
+        autoRefreshJob = viewModelScope.launch {
+            val credentials = withContext(Dispatchers.IO) { credentialStore.load() }
+            if (!credentials.isComplete()) {
+                return@launch
+            }
+            for (mode in staleModes) {
+                val latestSnapshot = withContext(Dispatchers.IO) { localHomeSnapshot() }
+                if (!isModeStale(latestSnapshot, mode)) {
+                    continue
+                }
+                if (RemoteActionGuard.isActive()) {
+                    _uiState.update {
+                        it.copy(statusMessage = "Mise à jour automatique reportée: une action est en cours.")
+                    }
+                    return@launch
+                }
+                runCatalogRefresh(credentials, mode, automatic = true)
+                delay(AUTO_REFRESH_BETWEEN_MODES_MS)
+            }
+        }
+    }
+
+    private suspend fun runCatalogRefresh(
+        credentials: XtreamModels.Credentials,
+        mode: Mode,
+        automatic: Boolean
+    ): Boolean {
+        if (mode == Mode.FAVORITES || mode == Mode.DOWNLOADS) {
+            return false
+        }
+        if (!credentials.isComplete()) {
+            if (!automatic) {
+                _uiState.update { it.copy(errorMessage = "Compte Xtream absent.") }
+            }
+            return false
+        }
+        if (_uiState.value.refreshingCatalogMode != null) {
+            if (!automatic) {
+                _uiState.update { it.copy(errorMessage = "Synchronisation déjà en cours.") }
+            }
+            return false
+        }
+        val label = RemoteLabels.sync(mode.label)
+        if (!RemoteActionGuard.tryAcquire(label)) {
+            if (!automatic) {
+                _uiState.update {
+                    it.copy(errorMessage = UserFacingMessages.remoteBusy("Rechargement du catalogue"))
+                }
+            }
+            return false
+        }
+        _uiState.update {
+            it.copy(
+                refreshingCatalogMode = mode.name,
+                statusMessage = if (automatic) {
+                    "Mise à jour automatique ${mode.label}..."
+                } else {
+                    "Rechargement ${mode.label}..."
+                },
+                errorMessage = null
+            )
+        }
+        return try {
+            val api = XtreamApi(credentials)
+            val rows = withContext(Dispatchers.IO) { fetchRows(api, mode) }
+            val snapshot = withContext(Dispatchers.IO) {
+                stateStore.saveRows(mode.name, rows)
+                localHomeSnapshot()
+            }
+            _uiState.update {
+                it.copy(
+                    liveCatalogLoadedAt = snapshot.live,
+                    moviesCatalogLoadedAt = snapshot.movies,
+                    seriesCatalogLoadedAt = snapshot.series,
+                    liveItemCount = snapshot.liveCount,
+                    movieItemCount = snapshot.movieCount,
+                    seriesItemCount = snapshot.seriesCount,
+                    favoriteItemCount = snapshot.favoriteCount,
+                    downloadedItemCount = snapshot.downloadCount,
+                    heroItem = snapshot.heroItem,
+                    networkProfile = snapshot.networkProfile,
+                    refreshingCatalogMode = null,
+                    statusMessage = if (automatic) {
+                        "${mode.label} mis à jour automatiquement"
+                    } else {
+                        "${mode.label} à jour"
+                    },
+                    errorMessage = null
+                )
+            }
+            true
+        } catch (exception: Exception) {
+            _uiState.update {
+                if (automatic) {
+                    it.copy(
+                        refreshingCatalogMode = null,
+                        statusMessage = "Mise à jour ${mode.label} reportée",
+                        errorMessage = null
+                    )
+                } else {
+                    it.copy(
+                        refreshingCatalogMode = null,
+                        statusMessage = null,
+                        errorMessage = "Rechargement ${mode.label} impossible: ${exception.message ?: exception.javaClass.simpleName}"
+                    )
+                }
+            }
+            false
+        } finally {
+            RemoteActionGuard.release(label)
+        }
+    }
+
+    private fun staleCatalogModes(snapshot: HomeResumeSnapshot): List<Mode> =
+        listOf(Mode.MOVIES, Mode.SERIES, Mode.LIVE).filter { mode -> isModeStale(snapshot, mode) }
+
+    private fun isModeStale(snapshot: HomeResumeSnapshot, mode: Mode): Boolean {
+        val savedAt = when (mode) {
+            Mode.LIVE -> snapshot.live
+            Mode.MOVIES -> snapshot.movies
+            Mode.SERIES -> snapshot.series
+            Mode.FAVORITES, Mode.DOWNLOADS -> Long.MAX_VALUE
+        }
+        return savedAt <= 0L || System.currentTimeMillis() - savedAt > CATALOG_AUTO_REFRESH_AFTER_MS
+    }
+
     private fun localHomeSnapshot(): HomeResumeSnapshot {
         val recent = stateStore.history(
             setOf(
@@ -372,6 +469,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         private const val STARTUP_LOADER_MS = 1_500L
+        private const val CATALOG_AUTO_REFRESH_AFTER_MS = 24L * 60L * 60L * 1000L
+        private const val AUTO_REFRESH_BETWEEN_MODES_MS = 250L
     }
 
     private data class HomeResumeSnapshot(

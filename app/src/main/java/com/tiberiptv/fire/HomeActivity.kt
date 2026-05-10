@@ -14,6 +14,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -117,7 +118,7 @@ class HomeActivity : ComponentActivity() {
         super.onResume()
         enterImmersiveMode()
         if (::homeViewModel.isInitialized) {
-            homeViewModel.refreshCatalogDates()
+            homeViewModel.refreshCatalogDates(autoRefreshStale = true)
         }
     }
 
@@ -706,7 +707,12 @@ private fun HomeHubScreen(
             )
         }
         val feedback = uiState.errorMessage ?: uiState.statusMessage
-        if (!feedback.isNullOrBlank()) {
+        if (refreshingMode != null) {
+            HomeCatalogRefreshBanner(
+                message = uiState.statusMessage ?: "Mise à jour du catalogue...",
+                accent = networkProfileAccent(uiState.networkProfile)
+            )
+        } else if (!feedback.isNullOrBlank()) {
             Text(
                 text = feedback,
                 color = if (uiState.errorMessage == null) Color(0xFFC9CDEB) else Color(0xFFFFB4AB),
@@ -799,6 +805,35 @@ private fun HomeHubScreen(
                 subtitle = "Réseau et lecteur",
                 modifier = Modifier.weight(1f),
                 onClick = onOpenSettings
+            )
+        }
+    }
+}
+
+@Composable
+private fun HomeCatalogRefreshBanner(message: String, accent: Color) {
+    Surface(
+        color = Color(0xCC151827),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.75f)),
+        modifier = Modifier
+            .widthIn(max = 620.dp)
+            .padding(top = 4.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            SignalLoader(sizeDp = 20, compact = true)
+            Text(
+                text = message,
+                color = Color(0xFFF7F5FF),
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }

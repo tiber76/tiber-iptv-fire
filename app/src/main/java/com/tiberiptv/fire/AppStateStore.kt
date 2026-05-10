@@ -190,6 +190,7 @@ class AppStateStore(context: Context) {
         val array = JSONArray()
         dao.deleteCatalogScope(scope)
         val savedAt = System.currentTimeMillis()
+        val itemCount = rows.sumOf { row -> row.items.size }
         for (rowIndex in rows.indices) {
             val row = rows[rowIndex]
             val rowJson = JSONObject()
@@ -226,6 +227,10 @@ class AppStateStore(context: Context) {
                 saved_at = savedAt
             }
         )
+        preferences.edit()
+            .putLong(KEY_PREFIX_CATALOG_SUMMARY_TIME + scope, savedAt)
+            .putInt(KEY_PREFIX_CATALOG_SUMMARY_COUNT + scope, itemCount)
+            .apply()
     }
 
     fun clearCatalogCaches() {
@@ -234,14 +239,16 @@ class AppStateStore(context: Context) {
             dao.deleteCatalogScope(scope)
             editor.remove(KEY_PREFIX_ROWS + scope)
             editor.remove(KEY_PREFIX_ROWS_TIME + scope)
+            editor.remove(KEY_PREFIX_CATALOG_SUMMARY_TIME + scope)
+            editor.remove(KEY_PREFIX_CATALOG_SUMMARY_COUNT + scope)
         }
         editor.apply()
     }
 
     fun loadRows(scope: String): List<XtreamModels.ContentRow> {
         val entity = dao.cache(scope)
-        val savedAt = entity?.saved_at ?: preferences.getLong(KEY_PREFIX_ROWS_TIME + scope, 0L)
-        if (savedAt == 0L || System.currentTimeMillis() - savedAt > CACHE_MAX_AGE_MS) {
+        val savedAt = cacheSavedAt(scope)
+        if (savedAt == 0L) {
             return emptyList()
         }
 
@@ -276,17 +283,26 @@ class AppStateStore(context: Context) {
     }
 
     fun cacheAgeMs(scope: String): Long {
-        val entity = dao.cache(scope)
-        val savedAt = entity?.saved_at ?: preferences.getLong(KEY_PREFIX_ROWS_TIME + scope, 0L)
+        val savedAt = cacheSavedAt(scope)
         return if (savedAt == 0L) -1L else System.currentTimeMillis() - savedAt
     }
 
     fun cacheSavedAt(scope: String): Long {
         val entity = dao.cache(scope)
-        return entity?.saved_at ?: preferences.getLong(KEY_PREFIX_ROWS_TIME + scope, 0L)
+        return entity?.saved_at
+            ?: preferences.getLong(KEY_PREFIX_CATALOG_SUMMARY_TIME + scope, 0L)
+                .takeIf { timestamp -> timestamp > 0L }
+            ?: preferences.getLong(KEY_PREFIX_ROWS_TIME + scope, 0L)
     }
 
-    fun cachedItemCount(scope: String): Int = dao.catalogItemCount(scope)
+    fun cachedItemCount(scope: String): Int {
+        val databaseCount = dao.catalogItemCount(scope)
+        return if (databaseCount > 0) {
+            databaseCount
+        } else {
+            preferences.getInt(KEY_PREFIX_CATALOG_SUMMARY_COUNT + scope, 0)
+        }
+    }
 
     fun cachedRowCount(scope: String): Int = loadRows(scope).size
 
@@ -348,12 +364,13 @@ class AppStateStore(context: Context) {
         private const val KEY_PREFIX_RESUME_DURATION = "resume_duration_"
         private const val KEY_PREFIX_ROWS = "rows_"
         private const val KEY_PREFIX_ROWS_TIME = "rows_time_"
+        private const val KEY_PREFIX_CATALOG_SUMMARY_TIME = "catalog_summary_time_"
+        private const val KEY_PREFIX_CATALOG_SUMMARY_COUNT = "catalog_summary_count_"
         private val CATALOG_SCOPES = arrayOf("LIVE", "MOVIES", "SERIES")
         private const val KEY_DOWNLOADS = "downloads"
         private const val KEY_PREFIX_DOWNLOAD_PATH = "download_path_"
         private const val KEY_PREFIX_DOWNLOAD_ID = "download_id_"
         private const val KEY_PREFIX_CONTENT_LENGTH = "content_length_"
-        private const val CACHE_MAX_AGE_MS = 24L * 60L * 60L * 1000L
 
         private fun itemToJson(item: XtreamModels.StreamItem): JSONObject {
             val itemJson = JSONObject()

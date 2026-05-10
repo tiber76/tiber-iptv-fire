@@ -736,7 +736,7 @@ private fun HomeHubScreen(
                     onClick = { onOpenMode("SERIES") }
                 )
                 PremiumMiniSectionButton(
-                    title = "Live",
+                    title = "Chaines TV Live",
                     subtitle = "${formatHomeCount(uiState.liveItemCount)} chaînes",
                     loadedAt = uiState.liveCatalogLoadedAt,
                     refreshing = refreshingMode == Mode.LIVE.name,

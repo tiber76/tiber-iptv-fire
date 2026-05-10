@@ -3262,30 +3262,80 @@ private fun SearchDialog(
                         .focusRequester(focusRequester)
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                    Button(
+                    SearchDialogActionButton(
+                        label = "Rechercher",
+                        primary = true,
                         onClick = {
                             onSearch(draft)
                             onDismiss()
                         },
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Rechercher")
-                    }
-                    OutlinedButton(
+                    )
+                    SearchDialogActionButton(
+                        label = "Effacer",
                         onClick = {
                             draft = ""
                             onSearch("")
                             onDismiss()
                         },
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Effacer")
-                    }
-                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
-                        Text("Fermer")
-                    }
+                    )
+                    SearchDialogActionButton(label = "Fermer", onClick = onDismiss, modifier = Modifier.weight(1f))
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SearchDialogActionButton(
+    label: String,
+    modifier: Modifier = Modifier,
+    primary: Boolean = false,
+    onClick: () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(12.dp)
+    val borderColor = when {
+        focused -> TvFocusOutline
+        primary -> Color(0xFF47D3C2)
+        else -> Color(0xFF4B5178)
+    }
+    val background = when {
+        focused -> TvFocusSurface
+        primary -> Color(0xFF173336)
+        else -> Color(0xFF1B1D30)
+    }
+    val textColor = when {
+        focused -> Color.White
+        primary -> Color(0xFF47D3C2)
+        else -> Color(0xFFE8EAFB)
+    }
+
+    Surface(
+        modifier = modifier
+            .height(48.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .graphicsLayer {
+                scaleX = if (focused) 1.025f else 1f
+                scaleY = if (focused) 1.025f else 1f
+                shadowElevation = if (focused) 14f else 0f
+            }
+            .clickable(onClick = onClick)
+            .focusable(),
+        shape = shape,
+        color = background,
+        border = BorderStroke(if (focused) 3.dp else 1.dp, borderColor)
+    ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                text = label,
+                color = textColor,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Black,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

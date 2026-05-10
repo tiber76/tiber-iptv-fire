@@ -805,15 +805,9 @@ private fun PremiumHomeTopBar(
                 maxLines = 1
             )
             Text(
-                text = "Accueil TV",
+                text = "Accueil TV • ${compactServerLabel(accountServer)}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color(0xFFD1D5F4),
-                maxLines = 1
-            )
-            Text(
-                text = compactServerLabel(accountServer),
-                style = MaterialTheme.typography.labelMedium,
-                color = Color(0xFF47D3C2),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

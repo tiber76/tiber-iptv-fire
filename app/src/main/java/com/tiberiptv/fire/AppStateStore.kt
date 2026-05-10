@@ -236,6 +236,7 @@ class AppStateStore(context: Context) {
     fun clearCatalogCaches() {
         val editor = preferences.edit()
         for (scope in CATALOG_SCOPES) {
+            dao.deleteCacheScope(scope)
             dao.deleteCatalogScope(scope)
             editor.remove(KEY_PREFIX_ROWS + scope)
             editor.remove(KEY_PREFIX_ROWS_TIME + scope)

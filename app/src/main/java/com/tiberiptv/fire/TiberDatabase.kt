@@ -56,6 +56,9 @@ abstract class TiberDatabase : RoomDatabase() {
         @Insert(onConflict = OnConflictStrategy.REPLACE)
         fun upsertCache(entity: CacheEntity)
 
+        @Query("DELETE FROM cache_entries WHERE scope = :scope")
+        fun deleteCacheScope(scope: String)
+
         @Query("DELETE FROM catalog_items WHERE scope = :scope")
         fun deleteCatalogScope(scope: String)
 

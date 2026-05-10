@@ -1732,6 +1732,11 @@ private fun CatalogScreen(
             onInitialFocusRequested()
         }
     }
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) {
+            PosterLoader.pauseRemoteLoading(900L)
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1876,8 +1881,10 @@ private fun CatalogScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
+                .padding(top = 10.dp)
+                .background(Color(0x33111625), RoundedCornerShape(14.dp))
                 .padding(top = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(7.dp)
         ) {
             state.error?.let { error ->
                 Text(error, color = Color(0xFFFFB4AB), style = MaterialTheme.typography.bodyMedium)
@@ -2037,9 +2044,14 @@ private fun ContentRow(
             rowState.scrollToItem(restoreIndex)
         }
     }
+    LaunchedEffect(rowState.isScrollInProgress) {
+        if (rowState.isScrollInProgress) {
+            PosterLoader.pauseRemoteLoading(900L)
+        }
+    }
     Column(
         modifier = Modifier.focusGroup(),
-        verticalArrangement = Arrangement.spacedBy(7.dp)
+        verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
         Text(
             visibleTitle,
@@ -2049,8 +2061,8 @@ private fun ContentRow(
         )
         LazyRow(
             state = rowState,
-            horizontalArrangement = Arrangement.spacedBy(if (premium) 12.dp else 10.dp),
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+            horizontalArrangement = Arrangement.spacedBy(if (premium) 10.dp else 8.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp)
         ) {
             items(
                 row.items,
@@ -2198,19 +2210,19 @@ private fun ContentCard(
     }
     val meta = cardMeta(item, localSize, resumeMeta)
     val cardWidth = when {
-        compact -> 160.dp
-        premium -> 158.dp
-        else -> 142.dp
+        compact -> 152.dp
+        premium -> 152.dp
+        else -> 134.dp
     }
     val cardHeight = when {
-        compact -> 164.dp
-        premium -> 306.dp
-        else -> 286.dp
+        compact -> 154.dp
+        premium -> 292.dp
+        else -> 270.dp
     }
     val posterHeight = when {
-        compact -> 88.dp
-        premium -> 230.dp
-        else -> 210.dp
+        compact -> 82.dp
+        premium -> 218.dp
+        else -> 196.dp
     }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val focusRequester = remember { FocusRequester() }
@@ -2268,8 +2280,8 @@ private fun ContentCard(
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(7.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(6.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             PosterWithBadges(
                 item = item,
@@ -3244,9 +3256,9 @@ private fun CatalogHeaderButton(
             .widthIn(min = 68.dp)
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
-                scaleX = if (focused) 1.025f else 1f
-                scaleY = if (focused) 1.025f else 1f
-                shadowElevation = if (focused) 10f else 0f
+                scaleX = if (focused) 1.01f else 1f
+                scaleY = if (focused) 1.01f else 1f
+                shadowElevation = if (focused) 7f else 0f
             }
             .clip(shape)
             .clickable(enabled = enabled, onClick = onClick)
@@ -3257,7 +3269,7 @@ private fun CatalogHeaderButton(
             else -> Color(0xFF1B1D30)
         },
         border = BorderStroke(
-            width = if (focused) 3.dp else 1.dp,
+            width = if (focused) 2.dp else 1.dp,
             color = if (focused) TvFocusOutline else Color(0xFF616789)
         ),
         shape = shape
@@ -3568,9 +3580,9 @@ private fun varFocusedSurface(
         modifier = Modifier
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
-                scaleX = if (focused) 1.012f else 1f
-                scaleY = if (focused) 1.012f else 1f
-                shadowElevation = if (focused) 8f else 0f
+                scaleX = if (focused) 1.006f else 1f
+                scaleY = if (focused) 1.006f else 1f
+                shadowElevation = if (focused) 5f else 0f
             }
             .then(modifier),
         shape = shape,
@@ -3580,7 +3592,7 @@ private fun varFocusedSurface(
             else -> Color(0xFF1B1D30)
         },
         border = BorderStroke(
-            if (focused) 3.dp else if (selected) 2.dp else 1.dp,
+            if (focused) 2.dp else if (selected) 2.dp else 1.dp,
             if (focused) TvFocusOutline else if (selected) Color(0xFF47D3C2) else Color(0xFF333656)
         )
     ) {

@@ -205,6 +205,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun playItem(viewModel: MainViewModel, item: XtreamModels.StreamItem, startFromBeginning: Boolean) {
+        PosterLoader.pauseRemoteLoading()
         val request = viewModel.playbackRequest(item) ?: return
         startActivity(
             Intent(this, PlayerActivity::class.java)
@@ -224,6 +225,7 @@ class MainActivity : ComponentActivity() {
             Toast.makeText(this, "Bande-annonce indisponible.", Toast.LENGTH_SHORT).show()
             return
         }
+        PosterLoader.pauseRemoteLoading()
         if (!RemoteActionGuard.tryAcquire(RemoteLabels.TRAILER)) {
             Toast.makeText(this, UserFacingMessages.remoteBusy("Bande-annonce"), Toast.LENGTH_LONG).show()
             return
@@ -650,7 +652,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return stateStore.cachedContentLength(item)
     }
 
+    private fun prioritizeUserRemoteAction() {
+        PosterLoader.pauseRemoteLoading()
+    }
+
     fun openItem(item: XtreamModels.StreamItem) {
+        prioritizeUserRemoteAction()
         val qualityHint = qualityHintFor(item)
         val local = localFile(item)
         _uiState.update {
@@ -710,6 +717,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playbackRequest(item: XtreamModels.StreamItem): PlaybackRequest? {
+        prioritizeUserRemoteAction()
         val preloadSession = activePreloadSession
         if (preloadSession != null &&
             activePreloadItem?.key() == item.key() &&
@@ -764,6 +772,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startPreload(item: XtreamModels.StreamItem, preloadMode: PreloadMode = PreloadMode.NORMAL) {
+        prioritizeUserRemoteAction()
         val api = api ?: return
         cleanupBufferedPlaybackIfIdle()
         if (item.type == XtreamModels.StreamItem.TYPE_SERIES) {
@@ -905,6 +914,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun convertPreloadToDownload(item: XtreamModels.StreamItem) {
+        prioritizeUserRemoteAction()
         val session = activePreloadSession
         if (session == null || activePreloadItem?.key() != item.key()) {
             _uiState.update { it.copy(error = "Aucun préchargement prêt pour ce contenu.") }
@@ -1068,6 +1078,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startDownload(item: XtreamModels.StreamItem) {
+        prioritizeUserRemoteAction()
         if (downloadJob?.isActive == true) {
             _uiState.update { it.copy(error = "Téléchargement déjà en cours.") }
             return
@@ -1279,6 +1290,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun loadMovieDetail(item: XtreamModels.StreamItem) {
         val api = api ?: return
+        prioritizeUserRemoteAction()
         if (!RemoteActionGuard.tryAcquire(RemoteLabels.MOVIE_DETAIL)) {
             _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Fiche film")) }
             return
@@ -1304,6 +1316,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun loadSeries(item: XtreamModels.StreamItem) {
         val api = api ?: return
+        prioritizeUserRemoteAction()
         if (!RemoteActionGuard.tryAcquire(RemoteLabels.SERIES_DETAIL)) {
             _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Fiche série")) }
             return

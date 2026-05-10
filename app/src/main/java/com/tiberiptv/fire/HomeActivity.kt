@@ -713,7 +713,7 @@ private fun HomeHubScreen(
             )
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 PremiumMiniSectionButton(
                     title = "Films",
@@ -733,7 +733,7 @@ private fun HomeHubScreen(
                     refreshing = refreshingMode == Mode.SERIES.name,
                     refreshEnabled = refreshingMode == null,
                     accent = Color(0xFFFF5F87),
-                    height = 60.dp,
+                    height = 64.dp,
                     onRefresh = { onRefreshCatalog(Mode.SERIES) },
                     onClick = { onOpenMode("SERIES") }
                 )
@@ -744,7 +744,7 @@ private fun HomeHubScreen(
                     refreshing = refreshingMode == Mode.LIVE.name,
                     refreshEnabled = refreshingMode == null,
                     accent = Color(0xFF8FA2FF),
-                    height = 60.dp,
+                    height = 64.dp,
                     onRefresh = { onRefreshCatalog(Mode.LIVE) },
                     onClick = { onOpenMode("LIVE") }
                 )

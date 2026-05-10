@@ -1,136 +1,124 @@
 # Tiber IPTV Fire
 
-MVP Android TV / Fire TV pour lire une source personnelle Xtream Codes.
+Application Android TV / Fire TV en Kotlin + Jetpack Compose pour lire une source personnelle Xtream Codes.
+
 L'application ne fournit aucun flux, aucune playlist et aucun acces IPTV.
 
-## Scope actuel
+## Version actuelle
 
-- Connexion Xtream Codes: serveur, identifiant, mot de passe.
-- Authentification via `player_api.php`.
-- Sections Live, Films et Series.
-- Section Local pour relire les films et episodes telecharges.
-- Recuperation des categories Xtream.
-- Carrousels TV focusables a la telecommande.
-- Posters distants avec cache memoire et disque.
-- Lecture Live, VOD et episodes via LibVLC pour mieux couvrir AC3, E-AC3, DTS et autres pistes audio non supportees par Android.
-- Player avec boutons Quitter, Lecture/Pause, Audio, Sous-titres, Diagnostic et Relancer.
-- Selection manuelle des pistes audio et sous-titres detectes.
-- Diagnostic codec, resolution, pistes audio et sous-titres dans le player.
-- Navigation Fire TV basique: D-pad, OK, Back, Menu pour reglages.
-- Suppression locale du compte.
-- Souris/trackpad sur macOS: clic boutons/cartes/champs et molette de scroll.
-- Recherche locale dans l'ecran courant.
-- Favoris, historique, reprise et cache des sections persistants via Room.
-- EPG court Xtream sur les chaines live.
-- Details VOD/series: synopsis, genre, duree, note, date, casting et realisation quand le fournisseur les renvoie.
+- Version officielle: `0.3.0`
+- Version code: `33`
+- Plateformes ciblees: Fire TV / Android TV, avec compatibilite Android classique a valider separement.
+
+## Fonctionnalites principales
+
+- Connexion Xtream Codes par serveur, identifiant et mot de passe.
+- Gestion multi-comptes avec changement rapide depuis la home.
+- Sections `Direct`, `Films`, `Series`, `Favoris` et `Telecharges`.
+- Catalogue local persistant via Room: le catalogue reste disponible meme s'il a plus de 24h.
+- Rechargement manuel par categorie et rechargement automatique si une categorie n'a jamais ete chargee ou date de plus de 24h.
+- Regle critique: une seule action remote Xtream a la fois via `RemoteActionGuard`.
+- Recherche locale, filtres 4K/note/annee, tris ajout recent/note/A-Z.
+- Favoris par clic long sur miniature.
+- Historique et reprise de lecture separes films/series.
+- Affichage des notes et tags 4K sur les miniatures quand les donnees sont disponibles.
+- Posters distants avec cache memoire/disque, pause du chargement pendant le scroll et avant lecture.
+- Lecture Live, VOD et episodes via LibVLC pour mieux couvrir AC3, E-AC3, DTS, HEVC et pistes multi-audio.
+- Choix audio, sous-titres et format image depuis le player.
+- Avance/retour telecommande avec feedback visuel quand la duree est connue.
 - Telechargement local des films et episodes via le gestionnaire de telechargement Android.
-- Verification de l'espace disponible avant telechargement quand le serveur renvoie la taille du fichier.
-- Progression du telechargement dans le header pendant que l'utilisateur continue a naviguer.
-- Fallback automatique Live `TS` <-> `M3U8` si le premier format echoue.
-- Skeleton loading sur les carrousels.
-- Choix du format live `ts` ou `m3u8`.
+- Section `Telecharges` avec poids du fichier et suppression.
+- Prechargement progressif pour connexions lentes, avec modes adaptes au profil reseau.
+- Profils reseau: `Normal`, `VPN / Connexion instable`, `Connexion lente`.
+- Ecran stockage: telechargements, cache affiches, cache prechargement temporaire.
 
-## Controles
+## Controles TV
 
-- Fleches clavier / telecommande: navigation.
-- Entree / OK: action.
-- Back / Esc: retour.
+- Fleches telecommande: navigation.
+- OK / Entree: action.
+- Retour: revient a l'ecran precedent.
 - Menu: reglages.
-- Dans le player, `Menu`: infos lecture.
-- Clic souris: selectionne les champs, boutons et cartes.
-- Clic long sur une carte: ajoute ou retire un favori.
-- Molette verticale: scroll de page.
-- Molette sur une rangee: scroll horizontal.
+- Clic long sur miniature: ajoute ou retire des favoris.
+- Dans le player:
+  - OK: lecture / pause selon le focus.
+  - Fleche droite/gauche: avance/retour quand disponible.
+  - Retour: masque les controles si visibles, quitte seulement si le player est deja en plein ecran.
 
-Sur certains emulateurs Android TV, la souris hote est exposee comme un pointeur TV et non comme un tactile classique. L'app intercepte donc les evenements pointeur globalement, mais le test le plus fiable reste les fleches/Entree ou un Fire Stick reel.
+Sur certains emulateurs Android TV, la souris hote est exposee comme un pointeur TV et non comme un tactile classique. Le test le plus fiable reste les fleches/OK ou un Fire Stick reel.
 
-## Diagnostic audio et codecs
+## Installation sur Fire Stick
 
-Le player utilise LibVLC afin de decoder en logiciel les pistes que le framework Android refuse souvent sur tablette/emulateur, par exemple AC3 5.1, E-AC3 et DTS. Si un flux reste muet:
+Depuis l'APK release GitHub:
 
-1. Ouvrir `Diagnostic` dans le player.
-2. Verifier les pistes audio detectees.
-3. Essayer le bouton `Audio` pour changer de piste.
-4. Essayer le format live `M3U8` dans `Reglages` si le flux direct est en TS.
+1. Installer l'application `Downloader` sur Fire TV.
+2. Ouvrir le lien de la release GitHub.
+3. Telecharger l'APK `tiber-iptv-0.3.0-33-release.apk`.
+4. Autoriser l'installation depuis `Downloader` si Fire OS le demande.
+5. Installer l'APK.
 
-Pour le live, l'app tente automatiquement le second format (`TS` ou `M3U8`) si le premier flux renvoie une erreur de lecture.
+Depuis ADB:
 
-## Build
+```sh
+adb connect <ip-du-fire-stick>:5555
+adb install -r app/build/outputs/apk/release/tiber-iptv-0.3.0-33-release.apk
+```
+
+`adb install -r` remplace l'ancienne version sans supprimer le stockage local tant que le package reste `com.tiberiptv.fire`.
+
+## Build debug local
 
 ```sh
 ./gradlew :app:assembleDebug
 ```
 
-APK genere:
+APK debug:
 
 ```text
-app/build/outputs/apk/debug/app-debug.apk
-```
-
-## Lancer en une commande sur macOS
-
-Avec un emulateur Android TV cree dans Android Studio:
-
-```sh
-./scripts/run-tv.sh
-```
-
-Le script construit l'APK, demarre un emulateur Android TV si aucun appareil ADB n'est deja disponible, installe l'app, puis la lance.
-
-Pour forcer un emulateur precis:
-
-```sh
-AVD_NAME="Android_TV_1080p_API_35" ./scripts/run-tv.sh
-```
-
-Pour utiliser un Fire Stick deja connecte en ADB:
-
-```sh
-SKIP_EMULATOR=1 DEVICE_SERIAL=<ip-du-fire-stick>:5555 ./scripts/run-tv.sh
-```
-
-## Installation sur Fire Stick
-
-1. Activer les options developpeur sur Fire TV.
-2. Activer le debogage ADB.
-3. Recuperer l'adresse IP du Fire Stick.
-4. Depuis ce dossier:
-
-```sh
-adb connect <ip-du-fire-stick>:5555
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+app/build/outputs/apk/debug/tiber-iptv-0.3.0-33-debug.apk
 ```
 
 ## Build release signe
-
-Pour produire un APK release localement signe:
 
 ```sh
 ./scripts/build-firestick-release.sh
 ```
 
-Le script genere un keystore local ignore par Git dans `release/`, puis produit:
+Le script genere ou reutilise un keystore local ignore par Git dans `release/`, puis produit:
 
 ```text
-app/build/outputs/apk/release/app-release.apk
+app/build/outputs/apk/release/tiber-iptv-0.3.0-33-release.apk
 ```
 
-## Telechargements
+## Tests
 
-Les films et episodes peuvent etre telecharges en arriere-plan depuis leur fiche detail. L'app verifie l'espace libre avant de lancer le telechargement lorsque le serveur expose la taille du fichier. La progression apparait dans le header, Android affiche une notification a la fin, puis le contenu est accessible depuis l'onglet `Local`.
+```sh
+./gradlew :app:testDebugUnitTest
+```
+
+Les tests couvrent notamment la persistance du catalogue local et des compteurs de catalogue.
 
 ## Architecture
 
-- `MainActivity`: connexion, navigation TV, categories, carrousels.
+- `HomeActivity`: home TV, comptes, profils reseau et rechargement rapide du catalogue.
+- `MainActivity`: catalogue, fiches contenus, favoris, telechargements, reglages.
 - `PlayerActivity`: lecteur plein ecran LibVLC.
 - `XtreamApi`: appels Xtream Codes et generation des URLs de lecture.
-- `CredentialStore`: stockage local des identifiants via `SharedPreferences`.
-- `AppStateStore` / `TiberDatabase`: cache local, historique, favoris, reprise et format live.
-- `PosterLoader`: chargement asynchrone des images.
+- `CredentialStore`: stockage local des comptes.
+- `AppStateStore` / `TiberDatabase`: catalogue local, historique, favoris, reprise, telechargements et preferences.
+- `PosterLoader`: chargement et cache des affiches avec respect du verrou remote.
+- `PreloadStreamServer`: prechargement progressif temporaire et nettoyage du cache tampon.
+
+## Notes importantes
+
+- Le catalogue local peut etre ancien mais reste disponible hors recharge.
+- Une categorie affiche `Ancien +24h` quand une recharge est conseillee.
+- Les affiches peuvent etre de qualite variable selon les URLs fournies par le serveur IPTV.
+- Le mode prechargement utilise le stockage temporaire et doit etre nettoye automatiquement.
+- L'application ne contourne aucune restriction fournisseur et ne multiplie pas les connexions Xtream en parallele.
 
 ## Prochaines etapes recommandees
 
-- Ajouter une UI Compose for TV plus proche d'une app premium.
-- Ajouter tests unitaires du parsing Xtream avec fixtures JSON.
-- Tester sur Fire Stick 4K reel avec des flux AC3/E-AC3/DTS/HEVC 4K.
-- Ajouter une vraie grille XMLTV multi-chaines et pas seulement l'EPG court Xtream.
+- Tester `0.3.0` sur Fire Stick 4K avec plusieurs profils reseau.
+- Verifier les popins audio/sous-titres/format sur TV 4K.
+- Continuer le decoupage de `MainActivity` en composants Compose dedies.
+- Ajouter davantage de tests sur le parsing Xtream et le prechargement.

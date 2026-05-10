@@ -84,9 +84,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -1766,12 +1770,13 @@ private fun CatalogScreen(
                 CatalogHeaderButton(
                     label = "Profil: ${state.networkProfile.label}",
                     contentColor = networkProfileAccent(state.networkProfile),
+                    icon = null,
                     onClick = onSettings,
                     modifier = Modifier.width(188.dp)
                 )
-                CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(74.dp), onClick = onHome)
-                CatalogHeaderButton(label = "Recharger", modifier = Modifier.width(100.dp), enabled = !state.loading, onClick = onRefresh)
-                CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(82.dp), onClick = onSettings)
+                CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(94.dp), onClick = onHome)
+                CatalogHeaderButton(label = "Recharger", modifier = Modifier.width(124.dp), enabled = !state.loading, onClick = onRefresh)
+                CatalogHeaderButton(label = "Réglages", modifier = Modifier.width(108.dp), onClick = onSettings)
             }
             HeaderDownloadStatus(state)
             LazyRow(
@@ -2322,7 +2327,7 @@ private fun DetailScreen(
                 .padding(horizontal = 22.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        DetailActionButton(label = "Retour", onClick = onBack, modifier = Modifier.width(94.dp))
+        DetailActionButton(label = "Retour", onClick = onBack, modifier = Modifier.width(108.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.fillMaxSize()) {
             PosterWithBadges(
                 item = item,
@@ -2629,6 +2634,7 @@ private fun DetailActionButton(
     enabled: Boolean = true,
     primary: Boolean = false,
     destructive: Boolean = false,
+    icon: TvButtonIcon? = iconForActionLabel(label),
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -2641,7 +2647,7 @@ private fun DetailActionButton(
     Surface(
         modifier = modifier
             .height(34.dp)
-            .widthIn(min = 86.dp, max = 164.dp)
+            .widthIn(min = 96.dp, max = 232.dp)
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
                 scaleX = if (focused) 1.025f else 1f
@@ -2671,12 +2677,22 @@ private fun DetailActionButton(
         ),
         contentColor = Color.White
     ) {
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 10.dp),
-            contentAlignment = Alignment.Center
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
         ) {
+            val tint = when {
+                !enabled -> Color(0xFF757A9B)
+                destructive -> Color(0xFFFFC5CD)
+                else -> Color.White
+            }
+            if (icon != null) {
+                TvActionIcon(icon = icon, tint = tint)
+                Spacer(Modifier.width(4.dp))
+            }
             Text(
                 label,
                 color = when {
@@ -2803,7 +2819,7 @@ private fun SettingsScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
-            DetailActionButton(label = "Retour", onClick = onClose, modifier = Modifier.width(118.dp))
+            DetailActionButton(label = "Retour", onClick = onClose, modifier = Modifier.width(128.dp))
         }
 
         SettingsSectionCard(
@@ -3038,6 +3054,143 @@ private fun networkProfileAccent(profile: NetworkProfile): Color =
         NetworkProfile.SLOW -> Color(0xFFFF7A90)
     }
 
+private enum class TvButtonIcon {
+    BACK,
+    PLAY,
+    RESTART,
+    TRAILER,
+    HEART,
+    DOWNLOAD,
+    BUFFER,
+    DELETE,
+    CANCEL,
+    HOME,
+    SETTINGS,
+    REFRESH,
+    PROFILE,
+    SEARCH,
+    CLEAR
+}
+
+private fun iconForActionLabel(label: String): TvButtonIcon? {
+    val normalized = label.lowercase(Locale.FRANCE)
+    return when {
+        normalized.contains("retour") -> TvButtonIcon.BACK
+        normalized.contains("reprendre") || normalized == "lire" -> TvButtonIcon.PLAY
+        normalized.contains("début") || normalized.contains("debut") -> TvButtonIcon.RESTART
+        normalized.contains("bande-annonce") -> TvButtonIcon.TRAILER
+        normalized.contains("favori") -> TvButtonIcon.HEART
+        normalized.contains("télécharger") || normalized.contains("telecharger") || normalized.contains("convertir") -> TvButtonIcon.DOWNLOAD
+        normalized.contains("précharger") || normalized.contains("precharger") -> TvButtonIcon.BUFFER
+        normalized.contains("supprimer") -> TvButtonIcon.DELETE
+        normalized.contains("annuler") -> TvButtonIcon.CANCEL
+        normalized.contains("accueil") -> TvButtonIcon.HOME
+        normalized.contains("réglages") || normalized.contains("reglages") -> TvButtonIcon.SETTINGS
+        normalized.contains("recharger") -> TvButtonIcon.REFRESH
+        normalized.contains("profil") -> TvButtonIcon.PROFILE
+        normalized.contains("recherche") || normalized.contains("rechercher") -> TvButtonIcon.SEARCH
+        normalized.contains("effacer") -> TvButtonIcon.CLEAR
+        else -> null
+    }
+}
+
+@Composable
+private fun TvActionIcon(icon: TvButtonIcon, tint: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier.size(14.dp)) {
+        val w = size.width
+        val h = size.height
+        val stroke = Stroke(width = w * 0.12f, cap = StrokeCap.Round)
+        when (icon) {
+            TvButtonIcon.BACK -> {
+                drawLine(tint, Offset(w * 0.68f, h * 0.18f), Offset(w * 0.32f, h * 0.50f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.32f, h * 0.50f), Offset(w * 0.68f, h * 0.82f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.34f, h * 0.50f), Offset(w * 0.86f, h * 0.50f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            }
+            TvButtonIcon.PLAY -> {
+                val path = Path().apply {
+                    moveTo(w * 0.34f, h * 0.22f)
+                    lineTo(w * 0.34f, h * 0.78f)
+                    lineTo(w * 0.78f, h * 0.50f)
+                    close()
+                }
+                drawPath(path, tint)
+            }
+            TvButtonIcon.RESTART -> {
+                drawArc(tint, startAngle = 35f, sweepAngle = 270f, useCenter = false, topLeft = Offset(w * 0.18f, h * 0.18f), size = Size(w * 0.64f, h * 0.64f), style = stroke)
+                drawLine(tint, Offset(w * 0.25f, h * 0.24f), Offset(w * 0.20f, h * 0.55f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.25f, h * 0.24f), Offset(w * 0.52f, h * 0.30f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            }
+            TvButtonIcon.TRAILER -> {
+                drawRoundRect(tint, topLeft = Offset(w * 0.14f, h * 0.24f), size = Size(w * 0.72f, h * 0.52f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.08f), style = stroke)
+                val path = Path().apply {
+                    moveTo(w * 0.44f, h * 0.38f)
+                    lineTo(w * 0.44f, h * 0.64f)
+                    lineTo(w * 0.64f, h * 0.51f)
+                    close()
+                }
+                drawPath(path, tint)
+            }
+            TvButtonIcon.HEART -> {
+                val path = Path().apply {
+                    moveTo(w * 0.50f, h * 0.80f)
+                    cubicTo(w * 0.15f, h * 0.58f, w * 0.10f, h * 0.30f, w * 0.30f, h * 0.24f)
+                    cubicTo(w * 0.42f, h * 0.20f, w * 0.50f, h * 0.30f, w * 0.50f, h * 0.38f)
+                    cubicTo(w * 0.50f, h * 0.30f, w * 0.58f, h * 0.20f, w * 0.70f, h * 0.24f)
+                    cubicTo(w * 0.90f, h * 0.30f, w * 0.85f, h * 0.58f, w * 0.50f, h * 0.80f)
+                    close()
+                }
+                drawPath(path, tint)
+            }
+            TvButtonIcon.DOWNLOAD -> {
+                drawLine(tint, Offset(w * 0.50f, h * 0.18f), Offset(w * 0.50f, h * 0.62f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.30f, h * 0.44f), Offset(w * 0.50f, h * 0.64f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.70f, h * 0.44f), Offset(w * 0.50f, h * 0.64f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.24f, h * 0.82f), Offset(w * 0.76f, h * 0.82f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            }
+            TvButtonIcon.BUFFER -> {
+                drawCircle(tint, radius = w * 0.30f, center = Offset(w * 0.50f, h * 0.50f), style = stroke)
+                drawCircle(tint.copy(alpha = 0.55f), radius = w * 0.11f, center = Offset(w * 0.50f, h * 0.50f))
+            }
+            TvButtonIcon.DELETE -> {
+                drawLine(tint, Offset(w * 0.28f, h * 0.30f), Offset(w * 0.72f, h * 0.74f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.72f, h * 0.30f), Offset(w * 0.28f, h * 0.74f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            }
+            TvButtonIcon.CANCEL -> {
+                drawCircle(tint, radius = w * 0.32f, center = Offset(w * 0.50f, h * 0.50f), style = stroke)
+                drawLine(tint, Offset(w * 0.34f, h * 0.34f), Offset(w * 0.66f, h * 0.66f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            }
+            TvButtonIcon.HOME -> {
+                drawLine(tint, Offset(w * 0.18f, h * 0.48f), Offset(w * 0.50f, h * 0.20f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.50f, h * 0.20f), Offset(w * 0.82f, h * 0.48f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.28f, h * 0.44f), Offset(w * 0.28f, h * 0.78f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.72f, h * 0.44f), Offset(w * 0.72f, h * 0.78f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.28f, h * 0.78f), Offset(w * 0.72f, h * 0.78f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            }
+            TvButtonIcon.SETTINGS -> {
+                drawCircle(tint, radius = w * 0.12f, center = Offset(w * 0.50f, h * 0.50f), style = stroke)
+                drawCircle(tint, radius = w * 0.34f, center = Offset(w * 0.50f, h * 0.50f), style = stroke)
+            }
+            TvButtonIcon.REFRESH -> {
+                drawArc(tint, startAngle = 35f, sweepAngle = 300f, useCenter = false, topLeft = Offset(w * 0.18f, h * 0.18f), size = Size(w * 0.64f, h * 0.64f), style = stroke)
+                drawLine(tint, Offset(w * 0.72f, h * 0.20f), Offset(w * 0.82f, h * 0.48f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.72f, h * 0.20f), Offset(w * 0.48f, h * 0.28f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            }
+            TvButtonIcon.PROFILE -> {
+                drawCircle(tint, radius = w * 0.16f, center = Offset(w * 0.50f, h * 0.34f), style = stroke)
+                drawArc(tint, startAngle = 205f, sweepAngle = 130f, useCenter = false, topLeft = Offset(w * 0.22f, h * 0.48f), size = Size(w * 0.56f, h * 0.42f), style = stroke)
+            }
+            TvButtonIcon.SEARCH -> {
+                drawCircle(tint, radius = w * 0.24f, center = Offset(w * 0.42f, h * 0.42f), style = stroke)
+                drawLine(tint, Offset(w * 0.60f, h * 0.60f), Offset(w * 0.82f, h * 0.82f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            }
+            TvButtonIcon.CLEAR -> {
+                drawLine(tint, Offset(w * 0.28f, h * 0.28f), Offset(w * 0.72f, h * 0.72f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.72f, h * 0.28f), Offset(w * 0.28f, h * 0.72f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            }
+        }
+    }
+}
+
 @Composable
 private fun SettingSwitch(title: String, subtitle: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
     Row(
@@ -3081,6 +3234,7 @@ private fun CatalogHeaderButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     contentColor: Color = Color.White,
+    icon: TvButtonIcon? = iconForActionLabel(label),
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -3109,16 +3263,25 @@ private fun CatalogHeaderButton(
         ),
         shape = shape
     ) {
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 10.dp),
-            contentAlignment = Alignment.Center
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
         ) {
+            if (icon != null) {
+                TvActionIcon(
+                    icon = icon,
+                    tint = if (enabled) contentColor else Color(0xFF757A9B),
+                    modifier = Modifier.size(12.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+            }
             Text(
                 label,
                 color = if (enabled) contentColor else Color(0xFF757A9B),
-                style = MaterialTheme.typography.labelMedium,
+                style = if (icon == null) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -3198,6 +3361,7 @@ private fun TvSearchButton(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            TvActionIcon(icon = TvButtonIcon.SEARCH, tint = Color(0xFF47D3C2), modifier = Modifier.size(12.dp))
             Text(
                 text = "Recherche",
                 color = Color(0xFF47D3C2),

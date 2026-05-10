@@ -722,6 +722,7 @@ private fun HomeHubScreen(
                     refreshing = refreshingMode == Mode.MOVIES.name,
                     refreshEnabled = refreshingMode == null,
                     accent = Color(0xFF16D6C5),
+                    height = 72.dp,
                     onRefresh = { onRefreshCatalog(Mode.MOVIES) },
                     onClick = { onOpenMode("MOVIES") }
                 )
@@ -732,6 +733,7 @@ private fun HomeHubScreen(
                     refreshing = refreshingMode == Mode.SERIES.name,
                     refreshEnabled = refreshingMode == null,
                     accent = Color(0xFFFF5F87),
+                    height = 60.dp,
                     onRefresh = { onRefreshCatalog(Mode.SERIES) },
                     onClick = { onOpenMode("SERIES") }
                 )
@@ -742,6 +744,7 @@ private fun HomeHubScreen(
                     refreshing = refreshingMode == Mode.LIVE.name,
                     refreshEnabled = refreshingMode == null,
                     accent = Color(0xFF8FA2FF),
+                    height = 60.dp,
                     onRefresh = { onRefreshCatalog(Mode.LIVE) },
                     onClick = { onOpenMode("LIVE") }
                 )
@@ -828,21 +831,28 @@ private fun HomeAccountStrip(
     onSelectAccount: (String) -> Unit,
     onAddAccount: () -> Unit
 ) {
+    val activeAccount = accounts.firstOrNull { account -> account.id == activeAccountId }
+        ?: accounts.firstOrNull()
+    val nextAccount = accounts.firstOrNull { account -> account.id != activeAccount?.id }
     Row(
-        modifier = Modifier.widthIn(max = 520.dp),
+        modifier = Modifier.widthIn(max = 480.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        accounts
-            .sortedByDescending { account -> account.id == activeAccountId }
-            .take(2)
-            .forEach { account ->
-                HomeAccountChip(
-                    account = account,
-                    active = account.id == activeAccountId,
-                    onClick = { onSelectAccount(account.id) }
-                )
-            }
+        activeAccount?.let { account ->
+            HomeAccountChip(
+                account = account,
+                active = true,
+                onClick = { onSelectAccount(account.id) }
+            )
+        }
+        nextAccount?.let { account ->
+            HomeAccountChip(
+                account = account,
+                active = false,
+                onClick = { onSelectAccount(account.id) }
+            )
+        }
         HomeAddAccountChip(onClick = onAddAccount)
     }
 }
@@ -912,14 +922,14 @@ private fun HomeAccountChip(
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (active) "Actif" else "Compte",
+                    text = if (active) "Compte actif" else "Changer",
                     color = if (active) Color(0xFF47D3C2) else Color(0xFFAEB5D6),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1
                 )
                 Text(
-                    text = account.username,
+                    text = shortAccountLabel(account.username),
                     color = Color.White,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Black,
@@ -968,6 +978,14 @@ private fun compactServerLabel(server: String): String =
         .removePrefix("https://")
         .removePrefix("http://")
         .ifBlank { "Compte connecté" }
+
+private fun shortAccountLabel(username: String): String {
+    val clean = username.trim()
+    if (clean.length <= 12) {
+        return clean.ifBlank { "Compte" }
+    }
+    return "${clean.take(6)}...${clean.takeLast(3)}"
+}
 
 @Composable
 private fun HomeCatalogRefreshBanner(message: String, accent: Color) {
@@ -1021,7 +1039,7 @@ private fun HomeHeroCard(
     val shape = RoundedCornerShape(16.dp)
     var focused by remember { mutableStateOf(false) }
     val focusScale by animateFloatAsState(
-        targetValue = if (focused) 1.01f else 1f,
+        targetValue = if (focused) 1.006f else 1f,
         label = "homeHeroFocusScale"
     )
     val hasResume = heroItem != null
@@ -1101,10 +1119,10 @@ private fun HomeHeroCard(
                 }
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     Text(
-                        text = if (hasResume) "Continuer à regarder" else "Prêt à regarder",
+                        text = if (hasResume) "Reprendre" else "Prêt à regarder",
                         color = Color(0xFF47D3C2),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Black,
@@ -1119,15 +1137,21 @@ private fun HomeHeroCard(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = heroItem?.progressLabel
-                            ?: "${formatHomeCount(moviesCount)} films • ${formatHomeCount(seriesCount)} séries • ${formatHomeCount(liveCount)} chaînes",
+                        text = if (hasResume) {
+                            "Lecture interrompue, reprise rapide disponible"
+                        } else {
+                            "${formatHomeCount(moviesCount)} films • ${formatHomeCount(seriesCount)} séries • ${formatHomeCount(liveCount)} chaînes"
+                        },
                         color = Color(0xFFD8DCF7),
                         style = MaterialTheme.typography.bodyMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (hasResume) {
+                        ResumeStatusPill(label = heroItem?.progressLabel ?: "Lecture en cours")
+                    }
                     Text(
-                        text = if (hasResume) "OK pour ouvrir la bonne section" else "OK pour ouvrir les films",
+                        text = if (hasResume) "OK pour reprendre" else "OK pour ouvrir les films",
                         color = Color(0xFFAEB5D6),
                         style = MaterialTheme.typography.bodySmall,
                         maxLines = 1
@@ -1139,6 +1163,25 @@ private fun HomeHeroCard(
 }
 
 @Composable
+private fun ResumeStatusPill(label: String) {
+    Surface(
+        color = Color(0x3322E0CA),
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, Color(0x6647D3C2))
+    ) {
+        Text(
+            text = label,
+            color = Color(0xFFE9FFFB),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+        )
+    }
+}
+
+@Composable
 private fun PremiumMiniSectionButton(
     title: String,
     subtitle: String,
@@ -1146,18 +1189,19 @@ private fun PremiumMiniSectionButton(
     refreshing: Boolean,
     refreshEnabled: Boolean,
     accent: Color,
+    height: androidx.compose.ui.unit.Dp = 64.dp,
     onRefresh: () -> Unit,
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(14.dp)
     var focused by remember { mutableStateOf(false) }
     val focusScale by animateFloatAsState(
-        targetValue = if (focused) 1.01f else 1f,
+        targetValue = if (focused) 1.006f else 1f,
         label = "premiumMiniSectionFocusScale"
     )
     Surface(
         modifier = Modifier
-            .height(64.dp)
+            .height(height)
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
@@ -1208,10 +1252,11 @@ private fun PremiumMiniSectionButton(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    "Chargé: ${formatCatalogLoadedAt(loadedAt)}",
-                    color = Color(0xFF9EA7CD),
+                    catalogStatusLabel(loadedAt),
+                    color = catalogStatusColor(loadedAt, accent),
                     style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
             HomeRefreshButton(
@@ -1411,6 +1456,7 @@ private fun NetworkProfileSelector(
     selectedProfile: NetworkProfile,
     onProfile: (NetworkProfile) -> Unit
 ) {
+    var expanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .widthIn(max = 1180.dp)
@@ -1418,28 +1464,90 @@ private fun NetworkProfileSelector(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(
-            "Profil réseau",
-            color = Color(0xFFD8DCF7),
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            modifier = Modifier.width(92.dp)
+        NetworkProfileSummaryButton(
+            selectedProfile = selectedProfile,
+            expanded = expanded,
+            onClick = { expanded = !expanded }
         )
-        NetworkProfile.entries.forEach { profile ->
-            val profileWidth = when (profile) {
-                NetworkProfile.NORMAL -> 108.dp
-                NetworkProfile.VPN_UNSTABLE -> 216.dp
-                NetworkProfile.SLOW -> 166.dp
+        if (expanded) {
+            NetworkProfile.entries.forEach { profile ->
+                val profileWidth = when (profile) {
+                    NetworkProfile.NORMAL -> 108.dp
+                    NetworkProfile.VPN_UNSTABLE -> 216.dp
+                    NetworkProfile.SLOW -> 166.dp
+                }
+                HomeProfileButton(
+                    profile = profile,
+                    selected = selectedProfile == profile,
+                    modifier = Modifier.width(profileWidth),
+                    onClick = {
+                        onProfile(profile)
+                        expanded = false
+                    }
+                )
             }
-            HomeProfileButton(
-                profile = profile,
-                selected = selectedProfile == profile,
-                modifier = Modifier.width(profileWidth),
-                onClick = { onProfile(profile) }
-            )
         }
         Spacer(Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun NetworkProfileSummaryButton(
+    selectedProfile: NetworkProfile,
+    expanded: Boolean,
+    onClick: () -> Unit
+) {
+    val accent = networkProfileAccent(selectedProfile)
+    val shape = RoundedCornerShape(999.dp)
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        modifier = Modifier
+            .width(300.dp)
+            .height(36.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) TvFocusColor else accent.copy(alpha = 0.65f),
+                shape = shape
+            )
+            .clip(shape)
+            .clickable(onClick = onClick)
+            .focusable(),
+        shape = shape,
+        color = if (focused) TvFocusSurface else Color(0xFF171B2E),
+        contentColor = Color.White
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                "Réseau",
+                color = Color(0xFFAEB5D6),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+            Text(
+                selectedProfile.label,
+                color = accent,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Black,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                if (expanded) "Fermer" else "Changer",
+                color = Color(0xFFD8DCF7),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+        }
     }
 }
 
@@ -1824,4 +1932,26 @@ private fun formatCatalogLoadedAt(timestamp: Long): String {
         return "jamais"
     }
     return SimpleDateFormat("dd/MM HH:mm", Locale.FRANCE).format(Date(timestamp))
+}
+
+private fun catalogStatusLabel(timestamp: Long): String {
+    if (timestamp <= 0L) {
+        return "Jamais chargé"
+    }
+    val ageMs = (System.currentTimeMillis() - timestamp).coerceAtLeast(0L)
+    val isStale = ageMs > 24L * 60L * 60L * 1000L
+    val prefix = if (isStale) "Ancien +24h" else "À jour"
+    return "$prefix • Mis à jour ${formatCatalogLoadedAt(timestamp)}"
+}
+
+private fun catalogStatusColor(timestamp: Long, accent: Color): Color {
+    if (timestamp <= 0L) {
+        return Color(0xFFFFC857)
+    }
+    val ageMs = (System.currentTimeMillis() - timestamp).coerceAtLeast(0L)
+    return if (ageMs > 24L * 60L * 60L * 1000L) {
+        Color(0xFFFFC857)
+    } else {
+        accent
+    }
 }

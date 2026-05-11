@@ -301,16 +301,25 @@ class XtreamApi(private val credentials: XtreamModels.Credentials) {
 
         private fun parseDetail(info: JSONObject?): XtreamModels.ItemDetail {
             if (info == null) {
-                return XtreamModels.ItemDetail("", "", "", "", "", "", "", "")
+                return XtreamModels.ItemDetail("", "", "", "", "", "", "", "", "")
             }
             return XtreamModels.ItemDetail(
                 firstNonEmpty(info.optString("plot", ""), info.optString("description", "")),
                 info.optString("genre", ""),
                 firstNonEmpty(info.optString("duration", ""), info.optString("duration_secs", "")),
                 ratingFrom(info.optString("rating", ""), info),
-                firstNonEmpty(info.optString("releasedate", ""), info.optString("releaseDate", "")),
-                info.optString("cast", ""),
-                info.optString("director", ""),
+                firstNonEmpty(info.optString("releasedate", ""), info.optString("releaseDate", ""), info.optString("release_date", "")),
+                firstNonEmpty(
+                    info.optString("age_rating", ""),
+                    info.optString("content_rating", ""),
+                    info.optString("rating_mpaa", ""),
+                    info.optString("mpaa_rating", ""),
+                    info.optString("certification", ""),
+                    info.optString("rated", ""),
+                    info.optString("age", "")
+                ),
+                firstNonEmpty(info.optString("cast", ""), info.optString("actors", ""), info.optString("stars", "")),
+                firstNonEmpty(info.optString("director", ""), info.optString("directors", "")),
                 firstNonEmpty(
                     info.optString("youtube_trailer", ""),
                     info.optString("trailer", ""),

@@ -53,6 +53,9 @@ abstract class TiberDatabase : RoomDatabase() {
         @Query("SELECT * FROM cache_entries WHERE scope = :scope LIMIT 1")
         fun cache(scope: String): CacheEntity?
 
+        @Query("SELECT saved_at FROM cache_entries WHERE scope = :scope LIMIT 1")
+        fun cacheSavedAt(scope: String): Long?
+
         @Insert(onConflict = OnConflictStrategy.REPLACE)
         fun upsertCache(entity: CacheEntity)
 

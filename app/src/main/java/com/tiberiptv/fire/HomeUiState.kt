@@ -6,7 +6,8 @@ import androidx.compose.runtime.Immutable
 data class HomeHeroItem(
     val title: String = "",
     val type: String = "",
-    val progressLabel: String = ""
+    val progressLabel: String = "",
+    val item: XtreamModels.StreamItem? = null
 )
 
 @Immutable

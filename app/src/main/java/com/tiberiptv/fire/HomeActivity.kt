@@ -1,10 +1,12 @@
 package com.tiberiptv.fire
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.RepeatMode
@@ -74,6 +76,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.ViewModelProvider
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -82,6 +85,7 @@ private val TvFocusColor = Color(0xFF8FA2FF)
 private val TvFocusSurface = Color(0xFF242842)
 private val TvCardSurface = Color(0xFF151827)
 private val TvCardBorder = Color(0xFF343956)
+private const val HOME_CATALOG_STALE_AFTER_MS = 7L * 24L * 60L * 60L * 1000L
 
 class HomeActivity : ComponentActivity() {
     private lateinit var homeViewModel: HomeViewModel
@@ -107,6 +111,7 @@ class HomeActivity : ComponentActivity() {
                     onRefreshCatalog = viewModel::refreshCatalog,
                     onNetworkProfile = viewModel::setNetworkProfile,
                     onOpenMode = ::openCatalog,
+                    onResumeHero = ::playHomeHero,
                     onOpenSettings = ::openSettings
                 )
             }
@@ -144,6 +149,60 @@ class HomeActivity : ComponentActivity() {
         )
     }
 
+    private fun playHomeHero(item: XtreamModels.StreamItem) {
+        if (item.type == XtreamModels.StreamItem.TYPE_SERIES || !item.playable) {
+            openCatalog(homeHeroMode(HomeHeroItem(type = item.type)))
+            return
+        }
+        PosterLoader.pauseRemoteLoading()
+        val stateStore = AppStateStore(this)
+        val storedPath = stateStore.downloadPath(item)
+        val localFile = storedPath.takeIf { it.isNotBlank() }?.let(::File)
+        val playbackUrl: String
+        val fallbackUrl: String
+        val remoteGuardLabel: String
+        if (localFile?.isFile == true) {
+            playbackUrl = Uri.fromFile(localFile).toString()
+            fallbackUrl = ""
+            remoteGuardLabel = ""
+        } else {
+            if (storedPath.isNotBlank()) {
+                stateStore.removeDownload(item)
+            }
+            val credentials = CredentialStore(this).load()
+            if (!credentials.isComplete()) {
+                Toast.makeText(this, "Compte Xtream absent.", Toast.LENGTH_LONG).show()
+                openCatalog(homeHeroMode(HomeHeroItem(type = item.type)))
+                return
+            }
+            if (!RemoteActionGuard.tryAcquire(RemoteLabels.PLAYBACK)) {
+                Toast.makeText(this, UserFacingMessages.remoteBusy("Lecture"), Toast.LENGTH_LONG).show()
+                return
+            }
+            val api = XtreamApi(credentials)
+            val liveFormat = stateStore.liveFormat()
+            playbackUrl = api.streamUrl(item, if (item.type == XtreamModels.StreamItem.TYPE_LIVE) liveFormat else null)
+            fallbackUrl = if (item.type == XtreamModels.StreamItem.TYPE_LIVE) {
+                api.streamUrl(item, if (liveFormat == "ts") "m3u8" else "ts")
+            } else {
+                ""
+            }
+            remoteGuardLabel = RemoteLabels.PLAYBACK
+        }
+        stateStore.addHistory(item)
+        startActivity(
+            Intent(this, PlayerActivity::class.java)
+                .putExtra(PlayerActivity.EXTRA_URL, playbackUrl)
+                .putExtra(PlayerActivity.EXTRA_FALLBACK_URL, fallbackUrl)
+                .putExtra(PlayerActivity.EXTRA_TITLE, item.title)
+                .putExtra(PlayerActivity.EXTRA_ITEM_KEY, item.key())
+                .putExtra(PlayerActivity.EXTRA_RESUME_ENABLED, item.type != XtreamModels.StreamItem.TYPE_LIVE)
+                .putExtra(PlayerActivity.EXTRA_START_FROM_BEGINNING, false)
+                .putExtra(PlayerActivity.EXTRA_PRELOAD_PROXY, false)
+                .putExtra(PlayerActivity.EXTRA_REMOTE_GUARD_LABEL, remoteGuardLabel)
+        )
+    }
+
     private fun openSettings() {
         startActivity(
             Intent(this, MainActivity::class.java)
@@ -177,6 +236,7 @@ private fun HomeRoute(
     onRefreshCatalog: (Mode) -> Unit,
     onNetworkProfile: (NetworkProfile) -> Unit,
     onOpenMode: (String) -> Unit,
+    onResumeHero: (XtreamModels.StreamItem) -> Unit,
     onOpenSettings: () -> Unit
 ) {
     AppBackground {
@@ -191,6 +251,7 @@ private fun HomeRoute(
                 onSelectAccount = onSelectAccount,
                 onAddAccount = onAddAccount,
                 onOpenMode = onOpenMode,
+                onResumeHero = onResumeHero,
                 onOpenSettings = onOpenSettings
             )
         } else {
@@ -627,6 +688,7 @@ private fun HomeHubScreen(
     onSelectAccount: (String) -> Unit,
     onAddAccount: () -> Unit,
     onOpenMode: (String) -> Unit,
+    onResumeHero: (XtreamModels.StreamItem) -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val heroFocusRequester = remember { FocusRequester() }
@@ -685,7 +747,14 @@ private fun HomeHubScreen(
                 modifier = Modifier
                     .weight(1.45f)
                     .focusRequester(heroFocusRequester),
-                onClick = { onOpenMode(heroMode) }
+                onClick = {
+                    val item = uiState.heroItem?.item
+                    if (item != null) {
+                        onResumeHero(item)
+                    } else {
+                        onOpenMode(heroMode)
+                    }
+                }
             )
             Column(
                 modifier = Modifier.weight(1f),
@@ -1855,8 +1924,8 @@ private fun catalogStatusLabel(timestamp: Long): String {
         return "Jamais chargé"
     }
     val ageMs = (System.currentTimeMillis() - timestamp).coerceAtLeast(0L)
-    val isStale = ageMs > 24L * 60L * 60L * 1000L
-    val prefix = if (isStale) "Ancien +24h" else "À jour"
+    val isStale = ageMs > HOME_CATALOG_STALE_AFTER_MS
+    val prefix = if (isStale) "Ancien +7j" else "À jour"
     return "$prefix • Mis à jour ${formatCatalogLoadedAt(timestamp)}"
 }
 
@@ -1865,7 +1934,7 @@ private fun catalogStatusColor(timestamp: Long, accent: Color): Color {
         return Color(0xFFFFC857)
     }
     val ageMs = (System.currentTimeMillis() - timestamp).coerceAtLeast(0L)
-    return if (ageMs > 24L * 60L * 60L * 1000L) {
+    return if (ageMs > HOME_CATALOG_STALE_AFTER_MS) {
         Color(0xFFFFC857)
     } else {
         accent

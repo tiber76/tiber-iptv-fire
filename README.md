@@ -6,8 +6,8 @@ L'application ne fournit aucun flux, aucune playlist et aucun acces IPTV.
 
 ## Version actuelle
 
-- Version officielle: `0.3.1`
-- Version code: `34`
+- Version officielle: `0.3.2`
+- Version code: `35`
 - Plateformes ciblees: Fire TV / Android TV, avec compatibilite Android classique a valider separement.
 
 ## Fonctionnalites principales
@@ -15,8 +15,8 @@ L'application ne fournit aucun flux, aucune playlist et aucun acces IPTV.
 - Connexion Xtream Codes par serveur, identifiant et mot de passe.
 - Gestion multi-comptes avec changement rapide depuis la home.
 - Sections `Direct`, `Films`, `Series`, `Favoris` et `Telecharges`.
-- Catalogue local persistant via Room: le catalogue reste disponible meme s'il a plus de 24h.
-- Rechargement manuel par categorie et rechargement automatique si une categorie n'a jamais ete chargee ou date de plus de 24h.
+- Catalogue local persistant via Room: le catalogue reste disponible meme s'il a plus de 7 jours.
+- Rechargement manuel par categorie et rechargement automatique seulement si une categorie n'a jamais ete chargee ou date de plus de 7 jours.
 - Regle critique: une seule action remote Xtream a la fois via `RemoteActionGuard`.
 - Recherche locale, filtres 4K/note/annee, tris ajout recent/note/A-Z.
 - Favoris par clic long sur miniature.
@@ -52,7 +52,7 @@ Depuis l'APK release GitHub:
 
 1. Installer l'application `Downloader` sur Fire TV.
 2. Ouvrir le lien de la release GitHub.
-3. Telecharger l'APK `tiber-iptv-0.3.1-34-release.apk`.
+3. Telecharger l'APK `tiber-iptv-0.3.2-35-release.apk`.
 4. Autoriser l'installation depuis `Downloader` si Fire OS le demande.
 5. Installer l'APK.
 
@@ -60,7 +60,7 @@ Depuis ADB:
 
 ```sh
 adb connect <ip-du-fire-stick>:5555
-adb install -r app/build/outputs/apk/release/tiber-iptv-0.3.1-34-release.apk
+adb install -r app/build/outputs/apk/release/tiber-iptv-0.3.2-35-release.apk
 ```
 
 `adb install -r` remplace l'ancienne version sans supprimer le stockage local tant que le package reste `com.tiberiptv.fire`.
@@ -74,7 +74,7 @@ adb install -r app/build/outputs/apk/release/tiber-iptv-0.3.1-34-release.apk
 APK debug:
 
 ```text
-app/build/outputs/apk/debug/tiber-iptv-0.3.1-34-debug.apk
+app/build/outputs/apk/debug/tiber-iptv-0.3.2-35-debug.apk
 ```
 
 ## Build release signe
@@ -86,7 +86,7 @@ app/build/outputs/apk/debug/tiber-iptv-0.3.1-34-debug.apk
 Le script genere ou reutilise un keystore local ignore par Git dans `release/`, puis produit:
 
 ```text
-app/build/outputs/apk/release/tiber-iptv-0.3.1-34-release.apk
+app/build/outputs/apk/release/tiber-iptv-0.3.2-35-release.apk
 ```
 
 ## Tests
@@ -111,14 +111,14 @@ Les tests couvrent notamment la persistance du catalogue local et des compteurs 
 ## Notes importantes
 
 - Le catalogue local peut etre ancien mais reste disponible hors recharge.
-- Une categorie affiche `Ancien +24h` quand une recharge est conseillee.
+- Une categorie affiche `Ancien +7j` quand une recharge est conseillee.
 - Les affiches peuvent etre de qualite variable selon les URLs fournies par le serveur IPTV.
 - Le mode prechargement utilise le stockage temporaire et doit etre nettoye automatiquement.
 - L'application ne contourne aucune restriction fournisseur et ne multiplie pas les connexions Xtream en parallele.
 
 ## Prochaines etapes recommandees
 
-- Tester `0.3.1` sur Fire Stick 4K avec plusieurs profils reseau.
+- Tester `0.3.2` sur Fire Stick 4K avec plusieurs profils reseau.
 - Verifier les popins audio/sous-titres/format sur TV 4K.
 - Continuer le decoupage de `MainActivity` en composants Compose dedies.
 - Ajouter davantage de tests sur le parsing Xtream et le prechargement.

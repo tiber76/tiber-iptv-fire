@@ -284,13 +284,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
             Mode.MOVIES -> {
                 for (category in api.getMovieCategories()) {
-                    val items = api.getMovieStreams(category.id).filter { item -> item.playable }.take(50)
+                    val items = api.getMovieStreams(category.id).filter { item -> item.playable }
                     if (items.isNotEmpty()) rows.add(XtreamModels.ContentRow(category.name, items))
                 }
             }
             Mode.SERIES -> {
                 for (category in api.getSeriesCategories()) {
-                    val items = api.getSeriesStreams(category.id).take(50)
+                    val items = api.getSeriesStreams(category.id)
                     if (items.isNotEmpty()) rows.add(XtreamModels.ContentRow(category.name, items))
                 }
             }
@@ -373,6 +373,16 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         return try {
             val api = XtreamApi(credentials)
             val rows = withContext(Dispatchers.IO) { fetchRows(api, mode) }
+            if (rows.isEmpty()) {
+                _uiState.update {
+                    it.copy(
+                        refreshingCatalogMode = null,
+                        statusMessage = "Aucun contenu reçu pour ${mode.label}, cache local conservé",
+                        errorMessage = null
+                    )
+                }
+                return false
+            }
             val snapshot = withContext(Dispatchers.IO) {
                 stateStore.saveRows(mode.name, rows)
                 localHomeSnapshot()
@@ -456,7 +466,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 HomeHeroItem(
                     title = item.title,
                     type = item.type,
-                    progressLabel = resumeProgressLabel(stateStore.resumePosition(item))
+                    progressLabel = resumeProgressLabel(stateStore.resumePosition(item)),
+                    item = item
                 )
             },
             networkProfile = stateStore.networkProfile()
@@ -470,7 +481,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         private const val STARTUP_LOADER_MS = 1_500L
-        private const val CATALOG_AUTO_REFRESH_AFTER_MS = 24L * 60L * 60L * 1000L
+        private const val CATALOG_AUTO_REFRESH_AFTER_MS = 7L * 24L * 60L * 60L * 1000L
         private const val AUTO_REFRESH_START_DELAY_MS = 2_500L
         private const val AUTO_REFRESH_BETWEEN_MODES_MS = 250L
     }

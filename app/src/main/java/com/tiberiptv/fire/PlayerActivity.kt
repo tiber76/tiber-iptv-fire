@@ -95,6 +95,7 @@ class PlayerActivity : Activity() {
     private lateinit var timeView: TextView
     private lateinit var playerHintView: TextView
     private lateinit var seekOverlayView: TextView
+    private lateinit var backButton: Button
     private lateinit var playPauseButton: Button
     private lateinit var qualityButton: Button
     private lateinit var displayModeButton: Button
@@ -176,16 +177,20 @@ class PlayerActivity : Activity() {
             setPadding(0, 0, dp(10), 0)
         }
 
+        backButton = controlButton("←").apply {
+            textSize = 20f
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(0, 0, 0, dp(2))
+        }
         playPauseButton = controlButton(playPauseButtonText(playing = true))
-        val audio = controlButton("♪ Audio")
-        val subtitles = controlButton("CC Sous-titres")
+        val audio = controlButton("♫ Audio")
+        val subtitles = controlButton("▤ Sous-titres")
         displayModeButton = controlButton(displayModeButtonText())
-        val info = controlButton("i Info")
+        val info = controlButton("ⓘ Info")
         val beginning = controlButton("↺ Début")
-        val retry = controlButton("⟳ Relancer")
-        val close = controlButton("← Retour")
         topControlButtons.clear()
-        topControlButtons.addAll(listOf(playPauseButton, audio, subtitles, displayModeButton, info, beginning, retry, close))
+        topControlButtons.addAll(listOf(backButton, playPauseButton, audio, subtitles, displayModeButton, info, beginning))
 
         topBar.addView(titleView, LinearLayout.LayoutParams(0, -2, 0.30f))
         val buttonRail = LinearLayout(this).apply {
@@ -197,14 +202,18 @@ class PlayerActivity : Activity() {
             addView(displayModeButton, buttonMargin())
             addView(info, buttonMargin())
             addView(beginning, buttonMargin())
-            addView(retry, buttonMargin())
-            addView(close, buttonMargin())
         }
         topBar.addView(buttonRail, LinearLayout.LayoutParams(0, -2, 0.70f))
         root.addView(
             topBar,
             FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply {
-                setMargins(dp(14), dp(12), dp(14), 0)
+                setMargins(dp(82), dp(12), dp(14), 0)
+            }
+        )
+        root.addView(
+            backButton,
+            FrameLayout.LayoutParams(dp(58), dp(58), Gravity.TOP or Gravity.START).apply {
+                setMargins(dp(14), dp(12), 0, 0)
             }
         )
 
@@ -310,8 +319,7 @@ class PlayerActivity : Activity() {
         info.setOnClickListener { showInfoDialog() }
         qualityButton.setOnClickListener { showQualityPanel() }
         beginning.setOnClickListener { playFromBeginning() }
-        retry.setOnClickListener { restartPlayback(true) }
-        close.setOnClickListener { finish() }
+        backButton.setOnClickListener { finish() }
 
         startPlayback()
         showControlsTemporarily()
@@ -1262,7 +1270,7 @@ class PlayerActivity : Activity() {
         if (!visible) {
             topControlsActive = false
         }
-        val bars = listOf(topBar, bottomBar)
+        val bars = listOf(topBar, bottomBar, backButton)
         if (visible) {
             bars.forEach { bar ->
                 bar.visibility = View.VISIBLE
@@ -1289,8 +1297,9 @@ class PlayerActivity : Activity() {
             text = label
             isAllCaps = false
             setTextColor(Color.WHITE)
-            textSize = 11f
+            textSize = 12.5f
             typeface = Typeface.DEFAULT_BOLD
+            includeFontPadding = false
             setPadding(dp(8), 0, dp(8), 0)
             minWidth = dp(58)
             minHeight = 0
@@ -1305,9 +1314,9 @@ class PlayerActivity : Activity() {
                     if (focused) ACCENT_FOCUS else STROKE,
                     dp(if (focused) 4 else 1)
                 )
-                view.scaleX = if (focused) 1.04f else 1f
-                view.scaleY = if (focused) 1.04f else 1f
-                view.elevation = dp(if (focused) 16 else 2).toFloat()
+                view.scaleX = if (focused) 1.025f else 1f
+                view.scaleY = if (focused) 1.025f else 1f
+                view.elevation = dp(if (focused) 12 else 2).toFloat()
             }
             setOnTouchListener { view, event ->
                 when (event.actionMasked) {
@@ -1365,8 +1374,8 @@ class PlayerActivity : Activity() {
                     },
                     dp(if (focused || selected) 2 else 1)
                 )
-                view.scaleX = if (focused) 1.025f else 1f
-                view.scaleY = if (focused) 1.025f else 1f
+                view.scaleX = 1f
+                view.scaleY = 1f
                 view.elevation = dp(if (focused) 12 else 2).toFloat()
             }
         }
@@ -1416,7 +1425,7 @@ class PlayerActivity : Activity() {
     }
 
     private fun buttonMargin(): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(-2, dp(38)).apply {
+        LinearLayout.LayoutParams(-2, dp(42)).apply {
             setMargins(dp(5), 0, 0, 0)
         }
 

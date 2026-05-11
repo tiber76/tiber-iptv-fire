@@ -1,5 +1,40 @@
 # Release notes
 
+## Tiber IPTV 0.3.2
+
+Version officielle Fire Stick / Android TV avec corrections player, catalogue et stockage.
+
+### Nouveautes et ameliorations
+
+- Player TV plus coherent: menu uniforme, bouton retour aligne, disparition automatique du retour avec les controles, bouton `Relancer` retire.
+- Clic `Reprendre` depuis la home corrige: lance directement le player au lieu d'ouvrir le catalogue.
+- Page `Telecharges` revue: panneau stockage compact, etat vide contraint dans l'ecran, recherche masquee dans `Favoris` et `Telecharges`.
+- Recherche catalogue amelioree: bouton `Effacer` direct dans le header et navigation telecommande corrigee dans la popin.
+- Prechargement corrige: progression basee sur le seuil reel du profil reseau, plus de faux blocage autour de 65%.
+- Catalogue complet conserve localement via Room sans JSON massif dans `CursorWindow`.
+- Fiches contenu enrichies quand le serveur fournit les donnees: date de sortie, classification/PEGI, casting, realisation.
+- Meilleure preservation du cache catalogue si un rechargement renvoie une liste vide.
+
+### Notes techniques
+
+- Package Android conserve: `com.tiberiptv.fire`.
+- Version: `0.3.2`.
+- Version code: `35`.
+- Regle remote conservee: une seule action Xtream a la fois via `RemoteActionGuard`.
+- L'APK release est signe avec le keystore local du projet.
+
+### Installation
+
+Installer l'APK `tiber-iptv-0.3.2-35-release.apk` depuis la release GitHub.
+
+Sur Fire Stick deja connecte en ADB:
+
+```sh
+adb install -r tiber-iptv-0.3.2-35-release.apk
+```
+
+L'installation avec `-r` remplace l'ancienne version sans supprimer les donnees locales de l'application.
+
 ## Tiber IPTV 0.3.1
 
 Version corrective orientee Fire Stick / Android TV.
@@ -10,6 +45,7 @@ Version corrective orientee Fire Stick / Android TV.
 - Popin de recherche plus rapide: clavier ouvert directement et validation clavier qui lance la recherche sans cliquer sur le bouton.
 - Chargement des affiches plus robuste: les requetes posters mises en pause pendant le scroll ou avant lecture retentent apres la pause.
 - Home Fire Stick allegee: moins d'animations de focus, moins d'ombres et moins d'effets de fond pour reduire la latence telecommande.
+- Rechargement automatique catalogue limite aux categories jamais chargees ou plus anciennes que 7 jours; avant cela, le rechargement reste manuel.
 - Rechargement automatique catalogue decale au demarrage pour laisser la navigation initiale plus fluide.
 
 ### Notes techniques

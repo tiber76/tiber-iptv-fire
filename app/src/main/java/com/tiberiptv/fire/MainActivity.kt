@@ -351,6 +351,7 @@ data class MainUiState(
     val rows: List<XtreamModels.ContentRow> = emptyList(),
     val query: String = "",
     val loading: Boolean = false,
+    val catalogInitialized: Boolean = false,
     val status: String = "Catalogue",
     val error: String? = null,
     val selectedItem: XtreamModels.StreamItem? = null,
@@ -491,11 +492,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadMode(mode: Mode, forceRefresh: Boolean) {
+        val resetCatalogControls = mode != _uiState.value.mode
         if (mode == Mode.FAVORITES) {
             _uiState.update {
                 it.copy(
                     mode = mode,
                     rows = favoriteRows(),
+                    query = if (resetCatalogControls) "" else it.query,
+                    filter4k = if (resetCatalogControls) false else it.filter4k,
+                    filterHighRating = if (resetCatalogControls) false else it.filterHighRating,
+                    filterRecentYear = if (resetCatalogControls) false else it.filterRecentYear,
                     selectedItem = null,
                     selectedQualityHint = "",
                     selectedSizeBytes = -1L,
@@ -504,6 +510,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     seriesInfo = null,
                     settingsVisible = false,
                     loading = false,
+                    catalogInitialized = true,
                     error = null,
                     status = "Favoris"
                 )
@@ -516,6 +523,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.withStorage(storage).copy(
                     mode = mode,
                     rows = downloadRows(),
+                    query = if (resetCatalogControls) "" else it.query,
+                    filter4k = if (resetCatalogControls) false else it.filter4k,
+                    filterHighRating = if (resetCatalogControls) false else it.filterHighRating,
+                    filterRecentYear = if (resetCatalogControls) false else it.filterRecentYear,
                     selectedItem = null,
                     selectedQualityHint = "",
                     selectedSizeBytes = -1L,
@@ -524,6 +535,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     seriesInfo = null,
                     settingsVisible = false,
                     loading = false,
+                    catalogInitialized = true,
                     error = null,
                     status = "Mes téléchargements"
                 )
@@ -537,6 +549,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     mode = mode,
                     rows = withHistoryRow(mode, cached),
+                    query = if (resetCatalogControls) "" else it.query,
+                    filter4k = if (resetCatalogControls) false else it.filter4k,
+                    filterHighRating = if (resetCatalogControls) false else it.filterHighRating,
+                    filterRecentYear = if (resetCatalogControls) false else it.filterRecentYear,
                     selectedItem = null,
                     selectedQualityHint = "",
                     selectedSizeBytes = -1L,
@@ -545,6 +561,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     seriesInfo = null,
                     settingsVisible = false,
                     loading = false,
+                    catalogInitialized = true,
                     error = null,
                     status = "Cache local"
                 )
@@ -554,7 +571,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val api = api
         if (api == null) {
-            _uiState.update { it.copy(error = "Compte Xtream absent.", loading = false) }
+            _uiState.update { it.copy(error = "Compte Xtream absent.", loading = false, catalogInitialized = true) }
             return
         }
         if (!RemoteActionGuard.tryAcquire(RemoteLabels.sync(mode.label))) {
@@ -563,6 +580,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     mode = mode,
                     settingsVisible = false,
                     loading = false,
+                    catalogInitialized = true,
                     error = UserFacingMessages.remoteBusy("Rechargement du catalogue"),
                     status = "Action déjà en cours"
                 )
@@ -574,6 +592,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 mode = mode,
+                query = if (resetCatalogControls) "" else it.query,
+                filter4k = if (resetCatalogControls) false else it.filter4k,
+                filterHighRating = if (resetCatalogControls) false else it.filterHighRating,
+                filterRecentYear = if (resetCatalogControls) false else it.filterRecentYear,
                 loading = true,
                 error = null,
                 selectedItem = null,
@@ -589,11 +611,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadJob = viewModelScope.launch {
             try {
                 val rows = withContext(Dispatchers.IO) { fetchRows(api, mode) }
+                if (rows.isEmpty()) {
+                    _uiState.update {
+                        it.copy(
+                            loading = false,
+                            catalogInitialized = true,
+                            error = "Rechargement ${mode.label}: aucun contenu reçu, cache local conservé.",
+                            status = "Cache local conservé"
+                        )
+                    }
+                    return@launch
+                }
                 stateStore.saveRows(mode.name, rows)
                 _uiState.update {
                     it.copy(
                         rows = withHistoryRow(mode, rows),
                         loading = false,
+                        catalogInitialized = true,
                         selectedQualityHint = "",
                         selectedSizeBytes = -1L,
                         selectedResumePositionMs = 0L,
@@ -605,6 +639,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update {
                     it.copy(
                         loading = false,
+                        catalogInitialized = true,
                         error = "Erreur Xtream: ${exception.message ?: exception.javaClass.simpleName}",
                         status = "Erreur"
                     )
@@ -1356,13 +1391,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             Mode.MOVIES -> {
                 for (category in api.getMovieCategories()) {
-                    val items = api.getMovieStreams(category.id).filter { item -> item.playable }.take(50)
+                    val items = api.getMovieStreams(category.id).filter { item -> item.playable }
                     if (items.isNotEmpty()) rows.add(XtreamModels.ContentRow(category.name, items))
                 }
             }
             Mode.SERIES -> {
                 for (category in api.getSeriesCategories()) {
-                    val items = firstItems(api.getSeriesStreams(category.id), 50)
+                    val items = api.getSeriesStreams(category.id)
                     if (items.isNotEmpty()) rows.add(XtreamModels.ContentRow(category.name, items))
                 }
             }
@@ -1463,7 +1498,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun localFile(item: XtreamModels.StreamItem): File {
         val storedPath = stateStore.downloadPath(item)
         if (storedPath.isNotEmpty()) {
-            return File(storedPath)
+            val storedFile = File(storedPath)
+            if (storedFile.isFile) {
+                return storedFile
+            }
         }
         val dir = File(appContext.getExternalFilesDir(null) ?: appContext.filesDir, "downloads")
         if (!dir.exists()) dir.mkdirs()
@@ -1755,6 +1793,7 @@ private fun CatalogScreen(
         val activeFilterCount = activeCatalogFilterCount(state)
         val hasCustomSort = state.catalogSort != CatalogSort.RECENT
         val hasCatalogControls = activeFilterCount > 0 || hasCustomSort
+        val searchAvailable = state.mode != Mode.FAVORITES && state.mode != Mode.DOWNLOADS
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1816,11 +1855,21 @@ private fun CatalogScreen(
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                     modifier = Modifier.focusGroup()
                 ) {
-                    TvSearchButton(
-                        query = state.query,
-                        modifier = Modifier.width(166.dp),
-                        onClick = { searchDialogVisible = true }
-                    )
+                    if (searchAvailable) {
+                        TvSearchButton(
+                            query = state.query,
+                            modifier = Modifier.width(166.dp),
+                            onClick = { searchDialogVisible = true }
+                        )
+                        if (state.query.isNotBlank()) {
+                            CatalogHeaderButton(
+                                label = "Effacer",
+                                modifier = Modifier.width(84.dp),
+                                contentColor = Color(0xFF47D3C2),
+                                onClick = { onSearch("") }
+                            )
+                        }
+                    }
                     TvChip(
                         selected = filtersExpanded || activeFilterCount > 0,
                         onClick = { filtersExpanded = !filtersExpanded },
@@ -1876,7 +1925,7 @@ private fun CatalogScreen(
                 }
             }
         }
-        if (searchDialogVisible) {
+        if (searchDialogVisible && searchAvailable) {
             SearchDialog(
                 query = state.query,
                 onSearch = onSearch,
@@ -1896,9 +1945,14 @@ private fun CatalogScreen(
                 Text(error, color = Color(0xFFFFB4AB), style = MaterialTheme.typography.bodyMedium)
             }
             if (state.mode == Mode.DOWNLOADS) {
-                StoragePanel(state, onClearImageCache)
+                StoragePanel(
+                    state = state,
+                    onClearImageCache = onClearImageCache,
+                    compact = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
-            if (state.loading) {
+            if (state.loading || !state.catalogInitialized) {
                 CatalogSkeleton(Modifier.weight(1f))
             } else {
                 val rows = remember(
@@ -1946,7 +2000,8 @@ private fun CatalogScreen(
                         primaryAction = if (state.query.isBlank()) "Recharger" else "Effacer",
                         onPrimaryAction = {
                             if (state.query.isBlank()) onRefresh() else onSearch("")
-                        }
+                        },
+                        modifier = Modifier.weight(1f)
                     )
                 } else {
                     LazyColumn(
@@ -2105,10 +2160,11 @@ private fun PremiumEmptyState(
     title: String,
     subtitle: String,
     primaryAction: String,
-    onPrimaryAction: () -> Unit
+    onPrimaryAction: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
         Surface(
@@ -2229,13 +2285,13 @@ private fun ContentCard(
     }
     val cardHeight = when {
         compact -> 148.dp
-        premium -> 280.dp
-        else -> 258.dp
+        premium -> 282.dp
+        else -> 262.dp
     }
     val posterHeight = when {
         compact -> 78.dp
-        premium -> 208.dp
-        else -> 186.dp
+        premium -> 194.dp
+        else -> 170.dp
     }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val focusRequester = remember { FocusRequester() }
@@ -2304,7 +2360,14 @@ private fun ContentCard(
                     .fillMaxWidth()
                     .height(posterHeight)
             )
-            Text(item.title, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                item.title,
+                color = Color.White,
+                maxLines = if (meta.isNotBlank()) 2 else 3,
+                overflow = TextOverflow.Ellipsis,
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.bodyMedium
+            )
             if (meta.isNotBlank()) {
                 Text(meta, color = Color(0xFFC9C6E4), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
             }
@@ -2538,8 +2601,11 @@ private fun DetailMetaPills(
         if (isUltraHd(item, state.selectedQualityHint)) {
             DetailMetaPill("4K", accent = Color(0xFF47D3C2), foreground = Color(0xFF071412))
         }
-        item.year.takeIf { it.isNotBlank() }?.let { year ->
-            DetailMetaPill(year)
+        detailReleaseLabel(detail, item)?.let { release ->
+            DetailMetaPill(release)
+        }
+        detail?.contentRating?.let(::displayContentRating)?.let { rating ->
+            DetailMetaPill(rating, accent = Color(0xFF343B60), foreground = Color.White)
         }
         detail?.duration?.takeIf { it.isNotBlank() }?.let { duration ->
             DetailMetaPill(duration)
@@ -2767,7 +2833,7 @@ private fun PreloadOnlyActions(
     onCancelPreload: () -> Unit,
     onConvertToDownload: () -> Unit
 ) {
-    val readyBytes = DETAIL_PRELOAD_READY_BYTES
+    val readyBytes = state.preloadReadyBytes.takeIf { it > 0L } ?: DETAIL_PRELOAD_READY_BYTES
     val progress = (state.preloadBytes.toFloat() / readyBytes.toFloat()).coerceIn(0f, 1f)
     val ready = state.preloadBytes >= readyBytes
     val modeLabel = state.preloadModeLabel.ifBlank { PreloadMode.NORMAL.label }
@@ -3315,7 +3381,12 @@ private fun CatalogHeaderButton(
 }
 
 @Composable
-private fun StoragePanel(state: MainUiState, onClearImageCache: () -> Unit) {
+private fun StoragePanel(
+    state: MainUiState,
+    onClearImageCache: () -> Unit,
+    compact: Boolean = false,
+    modifier: Modifier = Modifier
+) {
     val total = state.storageTotalBytes
     val available = state.storageAvailableBytes
     if (total <= 0L || available < 0L) {
@@ -3323,11 +3394,61 @@ private fun StoragePanel(state: MainUiState, onClearImageCache: () -> Unit) {
     }
     val used = (total - available).coerceAtLeast(0L)
     val usedFraction = (used.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+    if (compact) {
+        Surface(
+            color = Color(0xFF1B1D30),
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, Color(0xFF333656)),
+            modifier = modifier
+        ) {
+            Column(
+                Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Stockage", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("${formatBytes(available)} libres", color = Color(0xFF47D3C2), fontWeight = FontWeight.Bold)
+                }
+                LinearProgressIndicator(
+                    progress = { usedFraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp),
+                    color = if (available < 1024L * 1024L * 1024L) Color(0xFFFFB4AB) else Color(0xFF846FFF),
+                    trackColor = Color(0xFF333656)
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    StorageCompactMetric("Téléchargés", state.storageDownloadBytes, Modifier.weight(1f))
+                    StorageCompactMetric("Affiches", state.storagePosterCacheBytes, Modifier.weight(1f))
+                    StorageCompactMetric("Précharg.", state.storageTamponCacheBytes, Modifier.weight(1f))
+                    CatalogHeaderButton(
+                        label = "Nettoyer affiches",
+                        modifier = Modifier.width(150.dp),
+                        onClick = onClearImageCache
+                    )
+                }
+                if (available < 768L * 1024L * 1024L) {
+                    Text(
+                        "Stockage bas: téléchargement et préchargement peuvent être bloqués.",
+                        color = Color(0xFFFFB4AB),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+        return
+    }
     Surface(
         color = Color(0xFF1B1D30),
         shape = RoundedCornerShape(10.dp),
         border = BorderStroke(1.dp, Color(0xFF333656)),
-        modifier = Modifier.widthIn(max = 620.dp)
+        modifier = modifier.widthIn(max = 620.dp)
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -3412,6 +3533,7 @@ private fun SearchDialog(
 ) {
     var draft by remember(query) { mutableStateOf(query) }
     val searchFieldFocusRequester = remember { FocusRequester() }
+    val searchButtonFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val submitSearch = {
         onSearch(draft)
@@ -3435,6 +3557,26 @@ private fun SearchDialog(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text("Recherche catalogue", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    SearchDialogActionButton(
+                        label = "Rechercher",
+                        primary = true,
+                        onClick = submitSearch,
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(searchButtonFocusRequester)
+                    )
+                    SearchDialogActionButton(
+                        label = "Effacer",
+                        onClick = {
+                            draft = ""
+                            onSearch("")
+                            onDismiss()
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    SearchDialogActionButton(label = "Fermer", onClick = onDismiss, modifier = Modifier.weight(1f))
+                }
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
@@ -3456,26 +3598,18 @@ private fun SearchDialog(
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .onPreviewKeyEvent { event ->
+                            val native = event.nativeKeyEvent
+                            if (event.type == KeyEventType.KeyDown && native.keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+                                keyboardController?.hide()
+                                searchButtonFocusRequester.requestFocus()
+                                true
+                            } else {
+                                false
+                            }
+                        }
                         .focusRequester(searchFieldFocusRequester)
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                    SearchDialogActionButton(
-                        label = "Rechercher",
-                        primary = true,
-                        onClick = submitSearch,
-                        modifier = Modifier.weight(1f)
-                    )
-                    SearchDialogActionButton(
-                        label = "Effacer",
-                        onClick = {
-                            draft = ""
-                            onSearch("")
-                            onDismiss()
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-                    SearchDialogActionButton(label = "Fermer", onClick = onDismiss, modifier = Modifier.weight(1f))
-                }
             }
         }
     }
@@ -3531,6 +3665,30 @@ private fun SearchDialogActionButton(
                 overflow = TextOverflow.Ellipsis
             )
         }
+    }
+}
+
+@Composable
+private fun StorageCompactMetric(label: String, bytes: Long, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            label,
+            color = Color(0xFFC9C6E4),
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            formatBytes(bytes.coerceAtLeast(0L)),
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
     }
 }
 
@@ -3786,8 +3944,7 @@ private fun filteredRows(
             .asSequence()
             .flatMap { row -> row.items.asSequence().map { item -> row.title to item } }
             .filter { (rowTitle, item) ->
-                itemMatchesFilters(item, rowTitle, filter4k, filterHighRating, filterRecentYear, recentYearFloor) &&
-                    searchScore(clean, searchTokens, rowTitle, item) > 0
+                searchScore(clean, searchTokens, rowTitle, item) > 0
             }
             .distinctBy { (_, item) -> item.key() }
             .sortedWith(
@@ -3986,6 +4143,34 @@ private fun metaLabel(item: XtreamModels.StreamItem): String {
     return parts.joinToString(" | ")
 }
 
+private fun detailReleaseLabel(detail: XtreamModels.ItemDetail?, item: XtreamModels.StreamItem): String? {
+    val release = firstPresent(detail?.releaseDate, item.releaseDate)
+    return when {
+        release.isNotBlank() -> "Sortie $release"
+        item.year.isNotBlank() -> item.year
+        else -> null
+    }
+}
+
+private fun firstPresent(vararg values: String?): String =
+    values.firstOrNull { !it.isNullOrBlank() && !it.equals("null", ignoreCase = true) }?.trim().orEmpty()
+
+private fun displayContentRating(value: String?): String? {
+    val clean = value?.trim()?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) } ?: return null
+    val normalized = clean.uppercase(Locale.FRANCE)
+        .replace("RATING", "")
+        .replace("CERTIFICATION", "")
+        .replace("_", " ")
+        .trim()
+    val number = Regex("""\d{1,2}""").find(normalized)?.value
+    return when {
+        normalized.startsWith("PEGI") -> normalized
+        number != null -> "PEGI $number"
+        normalized in setOf("G", "PG", "PG-13", "R", "NC-17", "TV-MA", "TV-14", "TV-PG", "TV-G", "U") -> normalized
+        else -> clean.take(16)
+    }
+}
+
 private fun isUltraHd(item: XtreamModels.StreamItem, qualityHint: String = ""): Boolean {
     val text = "${item.title} ${item.extension} $qualityHint".lowercase(Locale.US)
     return Regex("(^|[^a-z0-9])(4k|uhd|2160p)([^a-z0-9]|$)").containsMatchIn(text)
@@ -4025,6 +4210,8 @@ private fun safeFileName(value: String): String =
 
 private fun compactDetailText(detail: XtreamModels.ItemDetail): String {
     val parts = mutableListOf<String>()
+    if (detail.releaseDate.isNotBlank()) parts.add("Date de sortie: ${detail.releaseDate}")
+    displayContentRating(detail.contentRating)?.let { parts.add("Classification: $it") }
     if (detail.cast.isNotBlank()) parts.add("Casting: ${detail.cast}")
     if (detail.director.isNotBlank()) parts.add("Réalisation: ${detail.director}")
     return parts.joinToString("\n")

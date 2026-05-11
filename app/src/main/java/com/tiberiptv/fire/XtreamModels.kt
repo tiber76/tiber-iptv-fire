@@ -77,6 +77,7 @@ class XtreamModels private constructor() {
         @JvmField val duration: String,
         @JvmField val rating: String,
         @JvmField val releaseDate: String,
+        @JvmField val contentRating: String,
         @JvmField val cast: String,
         @JvmField val director: String,
         @JvmField val trailer: String
@@ -87,6 +88,7 @@ class XtreamModels private constructor() {
                 duration.isNotEmpty() ||
                 rating.isNotEmpty() ||
                 releaseDate.isNotEmpty() ||
+                contentRating.isNotEmpty() ||
                 cast.isNotEmpty() ||
                 director.isNotEmpty() ||
                 trailer.isNotEmpty()

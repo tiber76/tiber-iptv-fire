@@ -187,20 +187,16 @@ class AppStateStore(context: Context) {
     }
 
     fun saveRows(scope: String, rows: List<XtreamModels.ContentRow>) {
-        val array = JSONArray()
         dao.deleteCatalogScope(scope)
+        dao.deleteCacheScope(scope)
         val savedAt = System.currentTimeMillis()
         val itemCount = rows.sumOf { row -> row.items.size }
         for (rowIndex in rows.indices) {
             val row = rows[rowIndex]
-            val rowJson = JSONObject()
-            val items = JSONArray()
             try {
-                rowJson.put("title", row.title)
                 for (itemIndex in row.items.indices) {
                     val item = row.items[itemIndex]
                     val itemJson = itemToJson(item)
-                    items.put(itemJson)
                     dao.upsertCatalogItem(
                         TiberDatabase.CatalogItemEntity().apply {
                             this.scope = scope
@@ -215,15 +211,13 @@ class AppStateStore(context: Context) {
                         }
                     )
                 }
-                rowJson.put("items", items)
-                array.put(rowJson)
             } catch (_: JSONException) {
             }
         }
         dao.upsertCache(
             TiberDatabase.CacheEntity().apply {
                 this.scope = scope
-                json = array.toString()
+                json = ""
                 saved_at = savedAt
             }
         )
@@ -247,18 +241,17 @@ class AppStateStore(context: Context) {
     }
 
     fun loadRows(scope: String): List<XtreamModels.ContentRow> {
-        val entity = dao.cache(scope)
         val savedAt = cacheSavedAt(scope)
         if (savedAt == 0L) {
             return emptyList()
         }
 
-        val catalogRows = loadCatalogRows(scope, savedAt)
+        val catalogRows = loadCatalogRows(scope)
         if (catalogRows.isNotEmpty()) {
             return catalogRows
         }
 
-        val json = entity?.json ?: preferences.getString(KEY_PREFIX_ROWS + scope, null)
+        val json = preferences.getString(KEY_PREFIX_ROWS + scope, null)
         val rows = mutableListOf<XtreamModels.ContentRow>()
         if (json == null) {
             return rows
@@ -289,8 +282,7 @@ class AppStateStore(context: Context) {
     }
 
     fun cacheSavedAt(scope: String): Long {
-        val entity = dao.cache(scope)
-        return entity?.saved_at
+        return dao.cacheSavedAt(scope)
             ?: preferences.getLong(KEY_PREFIX_CATALOG_SUMMARY_TIME + scope, 0L)
                 .takeIf { timestamp -> timestamp > 0L }
             ?: preferences.getLong(KEY_PREFIX_ROWS_TIME + scope, 0L)
@@ -307,14 +299,11 @@ class AppStateStore(context: Context) {
 
     fun cachedRowCount(scope: String): Int = loadRows(scope).size
 
-    private fun loadCatalogRows(scope: String, savedAt: Long): List<XtreamModels.ContentRow> {
+    private fun loadCatalogRows(scope: String): List<XtreamModels.ContentRow> {
         val rows = mutableListOf<XtreamModels.ContentRow>()
         var currentTitle: String? = null
         var currentItems = mutableListOf<XtreamModels.StreamItem>()
         for (entity in dao.catalogItems(scope)) {
-            if (entity.saved_at != savedAt) {
-                continue
-            }
             if (currentTitle == null || currentTitle != entity.row_title) {
                 if (currentTitle != null && currentItems.isNotEmpty()) {
                     rows.add(XtreamModels.ContentRow(currentTitle, currentItems))

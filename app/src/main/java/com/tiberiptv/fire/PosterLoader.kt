@@ -62,9 +62,8 @@ class PosterLoader(context: Context) {
                 return@execute
             }
 
-            val requestGeneration = pauseGeneration
             networkExecutor.execute {
-                fetch(key, requestGeneration)?.let { fetchedBitmap ->
+                fetchWithRetryAfterPause(key)?.let { fetchedBitmap ->
                     memoryCache.put(key, fetchedBitmap)
                     writeToDisk(key, fetchedBitmap)
                     main.post {
@@ -137,7 +136,6 @@ class PosterLoader(context: Context) {
         private val diskExecutor: ExecutorService = Executors.newFixedThreadPool(2)
         private val networkExecutor: ExecutorService = Executors.newSingleThreadExecutor()
         @Volatile private var pauseUntilMs: Long = 0L
-        @Volatile private var pauseGeneration: Long = 0L
         @Volatile private var activeConnection: HttpURLConnection? = null
         private val memoryCache: LruCache<String, Bitmap> =
             object : LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 10L).toInt()) {
@@ -147,24 +145,17 @@ class PosterLoader(context: Context) {
         @Synchronized
         fun pauseRemoteLoading(durationMs: Long = POSTER_PRIORITY_PAUSE_MS) {
             pauseUntilMs = System.currentTimeMillis() + durationMs
-            pauseGeneration += 1L
             activeConnection?.disconnect()
             RemoteActionGuard.release(RemoteLabels.POSTER)
         }
 
-        private fun fetch(url: String, generation: Long): Bitmap? {
+        private fun fetch(url: String): Bitmap? {
             val normalizedUrl = normalizeUrl(url) ?: return null
-            if (shouldPause(generation)) {
-                return null
-            }
             if (!acquirePosterSlot()) {
                 return null
             }
             var connection: HttpURLConnection? = null
             return try {
-                if (shouldPause(generation)) {
-                    return null
-                }
                 connection = URL(normalizedUrl).openConnection() as HttpURLConnection
                 activeConnection = connection
                 connection.connectTimeout = 8_000
@@ -186,27 +177,42 @@ class PosterLoader(context: Context) {
             }
         }
 
+        private fun fetchWithRetryAfterPause(url: String): Bitmap? {
+            fetch(url)?.let { bitmap -> return bitmap }
+            val retryAtMs = pauseUntilMs
+            val waitMs = retryAtMs - System.currentTimeMillis()
+            if (waitMs <= 0L) {
+                return null
+            }
+            if (!sleepQuietly(waitMs + POSTER_GUARD_RETRY_MS)) {
+                return null
+            }
+            return fetch(url)
+        }
+
         private fun acquirePosterSlot(): Boolean {
             val deadline = System.currentTimeMillis() + POSTER_GUARD_TIMEOUT_MS
             while (System.currentTimeMillis() < deadline) {
                 if (System.currentTimeMillis() < pauseUntilMs) {
-                    return false
+                    if (!sleepQuietly(POSTER_GUARD_RETRY_MS)) return false else continue
                 }
                 if (RemoteActionGuard.tryAcquire(RemoteLabels.POSTER)) {
                     return true
                 }
-                try {
-                    Thread.sleep(POSTER_GUARD_RETRY_MS)
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    return false
-                }
+                if (!sleepQuietly(POSTER_GUARD_RETRY_MS)) return false
             }
             return false
         }
 
-        private fun shouldPause(generation: Long): Boolean =
-            generation != pauseGeneration || System.currentTimeMillis() < pauseUntilMs
+        private fun sleepQuietly(durationMs: Long): Boolean {
+            try {
+                Thread.sleep(durationMs)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+            return true
+        }
 
         private fun normalizeUrl(url: String): String? {
             val trimmed = url.trim()

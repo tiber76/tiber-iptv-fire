@@ -44,7 +44,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -227,28 +226,6 @@ private fun AppBackground(content: @Composable () -> Unit) {
             )
             .windowInsetsPadding(WindowInsets.navigationBars)
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(Color(0x553C63FF), Color.Transparent),
-                        center = androidx.compose.ui.geometry.Offset(260f, 120f),
-                        radius = 520f
-                    )
-                )
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(Color(0x4516D6C5), Color.Transparent),
-                        center = androidx.compose.ui.geometry.Offset(1180f, 620f),
-                        radius = 560f
-                    )
-                )
-        )
         content()
     }
 }
@@ -705,7 +682,6 @@ private fun HomeHubScreen(
                 moviesCount = uiState.movieItemCount,
                 seriesCount = uiState.seriesItemCount,
                 liveCount = uiState.liveItemCount,
-                networkProfile = uiState.networkProfile,
                 modifier = Modifier
                     .weight(1.45f)
                     .focusRequester(heroFocusRequester),
@@ -795,7 +771,7 @@ private fun PremiumHomeTopBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        TiberLogoMark(animated = true, sizeDp = 42)
+        TiberLogoMark(animated = false, sizeDp = 42)
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.Center
@@ -865,20 +841,11 @@ private fun HomeAccountChip(
 ) {
     val shape = RoundedCornerShape(999.dp)
     var focused by remember { mutableStateOf(false) }
-    val focusScale by animateFloatAsState(
-        targetValue = if (focused) 1.015f else 1f,
-        label = "homeAccountChipFocusScale"
-    )
     Surface(
         modifier = Modifier
             .widthIn(min = 132.dp, max = 190.dp)
             .height(42.dp)
             .onFocusChanged { focused = it.isFocused }
-            .graphicsLayer {
-                scaleX = focusScale
-                scaleY = focusScale
-                shadowElevation = if (focused) 8f else 0f
-            }
             .border(
                 width = if (focused || active) 2.dp else 1.dp,
                 color = when {
@@ -1032,26 +999,16 @@ private fun HomeHeroCard(
     moviesCount: Int,
     seriesCount: Int,
     liveCount: Int,
-    networkProfile: NetworkProfile,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(16.dp)
     var focused by remember { mutableStateOf(false) }
-    val focusScale by animateFloatAsState(
-        targetValue = if (focused) 1.006f else 1f,
-        label = "homeHeroFocusScale"
-    )
     val hasResume = heroItem != null
     Surface(
         modifier = modifier
             .height(208.dp)
             .onFocusChanged { focused = it.isFocused }
-            .graphicsLayer {
-                scaleX = focusScale
-                scaleY = focusScale
-                shadowElevation = if (focused) 12f else 2f
-            }
             .border(
                 width = if (focused) 2.dp else 1.dp,
                 color = if (focused) TvFocusColor else Color(0xFF343956),
@@ -1077,20 +1034,6 @@ private fun HomeHeroCard(
                     )
                 )
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(
-                                networkProfileAccent(networkProfile).copy(alpha = 0.30f),
-                                Color.Transparent
-                            ),
-                            center = androidx.compose.ui.geometry.Offset(780f, 60f),
-                            radius = 520f
-                        )
-                    )
-            )
             Row(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1195,20 +1138,11 @@ private fun PremiumMiniSectionButton(
 ) {
     val shape = RoundedCornerShape(14.dp)
     var focused by remember { mutableStateOf(false) }
-    val focusScale by animateFloatAsState(
-        targetValue = if (focused) 1.006f else 1f,
-        label = "premiumMiniSectionFocusScale"
-    )
     Surface(
         modifier = Modifier
             .height(height)
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
-            .graphicsLayer {
-                scaleX = focusScale
-                scaleY = focusScale
-                shadowElevation = if (focused) 8f else 0f
-            }
             .border(
                 width = if (focused) 2.dp else 1.dp,
                 color = if (focused) TvFocusColor else Color(0xFF343956),
@@ -1561,19 +1495,10 @@ private fun HomeProfileButton(
     val accent = networkProfileAccent(profile)
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(999.dp)
-    val focusScale by animateFloatAsState(
-        targetValue = if (focused) 1.008f else 1f,
-        label = "homeProfileFocusScale"
-    )
     Surface(
         modifier = modifier
             .height(36.dp)
             .onFocusChanged { focused = it.isFocused }
-            .graphicsLayer {
-                scaleX = focusScale
-                scaleY = focusScale
-                shadowElevation = if (focused) 6f else 0f
-            }
             .border(
                 width = if (focused) 2.dp else if (selected) 2.dp else 1.dp,
                 color = when {
@@ -1882,20 +1807,11 @@ private fun SecondaryHomeButton(
 ) {
     val shape = RoundedCornerShape(14.dp)
     var focused by remember { mutableStateOf(false) }
-    val focusScale by animateFloatAsState(
-        targetValue = if (focused) 1.01f else 1f,
-        label = "secondaryHomeFocusScale"
-    )
 
-    ElevatedButton(
+    Button(
         onClick = onClick,
         modifier = modifier
             .onFocusChanged { focused = it.isFocused }
-            .graphicsLayer {
-                scaleX = focusScale
-                scaleY = focusScale
-                shadowElevation = if (focused) 8f else 0f
-            }
             .border(
                 width = if (focused) 2.dp else 1.dp,
                 color = if (focused) TvFocusColor else TvCardBorder,
@@ -1903,7 +1819,7 @@ private fun SecondaryHomeButton(
             )
             .height(56.dp),
         shape = shape,
-        colors = ButtonDefaults.elevatedButtonColors(
+        colors = ButtonDefaults.buttonColors(
             containerColor = if (focused) TvFocusSurface else TvCardSurface,
             contentColor = Color.White
         )

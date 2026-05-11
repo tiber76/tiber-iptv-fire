@@ -57,6 +57,8 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -98,6 +100,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -111,6 +114,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -276,6 +280,8 @@ private const val BUFFER_COMPLETE_AHEAD_BYTES = Long.MAX_VALUE / 4L
 private const val DETAIL_PRELOAD_READY_BYTES = 250L * 1024L * 1024L
 private val RatingFractionRegex = Regex("""(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)""")
 private val RatingNumberRegex = Regex("""\d+(?:\.\d+)?""")
+private val SearchMarksRegex = Regex("\\p{Mn}+")
+private val SearchSeparatorRegex = Regex("[^a-z0-9]+")
 
 private object ViewModelHolder {
     var current: MainViewModel? = null
@@ -3405,11 +3411,16 @@ private fun SearchDialog(
     onDismiss: () -> Unit
 ) {
     var draft by remember(query) { mutableStateOf(query) }
-    val searchButtonFocusRequester = remember { FocusRequester() }
+    val searchFieldFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val submitSearch = {
+        onSearch(draft)
+        onDismiss()
+    }
     LaunchedEffect(Unit) {
-        keyboardController?.hide()
-        searchButtonFocusRequester.requestFocus()
+        searchFieldFocusRequester.requestFocus()
+        delay(120L)
+        keyboardController?.show()
     }
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -3429,6 +3440,8 @@ private fun SearchDialog(
                     onValueChange = { draft = it },
                     singleLine = true,
                     label = { Text("Titre, année, catégorie") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { submitSearch() }),
                     shape = RoundedCornerShape(10.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Color.White,
@@ -3443,18 +3456,14 @@ private fun SearchDialog(
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .focusRequester(searchFieldFocusRequester)
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     SearchDialogActionButton(
                         label = "Rechercher",
                         primary = true,
-                        onClick = {
-                            onSearch(draft)
-                            onDismiss()
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .focusRequester(searchButtonFocusRequester)
+                        onClick = submitSearch,
+                        modifier = Modifier.weight(1f)
                     )
                     SearchDialogActionButton(
                         label = "Effacer",
@@ -3769,28 +3778,97 @@ private fun filteredRows(
     filterRecentYear: Boolean,
     sort: CatalogSort
 ): List<XtreamModels.ContentRow> {
-    val clean = query.trim().lowercase(Locale.US)
+    val clean = normalizeSearch(query)
     val recentYearFloor = Calendar.getInstance().get(Calendar.YEAR) - 1
+    if (clean.isNotEmpty()) {
+        val searchTokens = clean.split(' ').filter { token -> token.isNotBlank() }
+        val items = rows
+            .asSequence()
+            .flatMap { row -> row.items.asSequence().map { item -> row.title to item } }
+            .filter { (rowTitle, item) ->
+                itemMatchesFilters(item, rowTitle, filter4k, filterHighRating, filterRecentYear, recentYearFloor) &&
+                    searchScore(clean, searchTokens, rowTitle, item) > 0
+            }
+            .distinctBy { (_, item) -> item.key() }
+            .sortedWith(
+                compareByDescending<Pair<String, XtreamModels.StreamItem>> { (rowTitle, item) ->
+                    searchScore(clean, searchTokens, rowTitle, item)
+                }.then(comparatorForSearchSort(sort))
+            )
+            .map { (_, item) -> item }
+            .toList()
+        return if (items.isEmpty()) emptyList() else listOf(XtreamModels.ContentRow("Résultats recherche", items))
+    }
     return rows.mapNotNull { row ->
         val isPremiumRow = premiumRowKind(row.title) != null
-        val visibleRowTitle = displayRowTitle(row.title)
-        val rowMatchesQuery = clean.isEmpty() || visibleRowTitle.lowercase(Locale.US).contains(clean)
         val items = row.items
             .filter { item ->
-                val queryMatches = rowMatchesQuery ||
-                    item.title.lowercase(Locale.US).contains(clean) ||
-                    item.categoryId.lowercase(Locale.US).contains(clean) ||
-                    item.year.lowercase(Locale.US).contains(clean)
-                queryMatches &&
-                    (!filter4k || isUltraHd(item, row.title)) &&
-                    (!filterHighRating || numericRating(item.rating) >= 7f) &&
-                    (!filterRecentYear || item.year.toIntOrNull()?.let { year -> year >= recentYearFloor } == true)
+                itemMatchesFilters(item, row.title, filter4k, filterHighRating, filterRecentYear, recentYearFloor)
             }
             .let { filteredItems ->
                 if (isPremiumRow) filteredItems else filteredItems.sortedForCatalog(sort)
             }
         if (items.isEmpty()) null else XtreamModels.ContentRow(row.title, items)
     }
+}
+
+private fun itemMatchesFilters(
+    item: XtreamModels.StreamItem,
+    rowTitle: String,
+    filter4k: Boolean,
+    filterHighRating: Boolean,
+    filterRecentYear: Boolean,
+    recentYearFloor: Int
+): Boolean =
+    (!filter4k || isUltraHd(item, rowTitle)) &&
+        (!filterHighRating || numericRating(item.rating) >= 7f) &&
+        (!filterRecentYear || item.year.toIntOrNull()?.let { year -> year >= recentYearFloor } == true)
+
+private fun searchScore(
+    cleanQuery: String,
+    tokens: List<String>,
+    rowTitle: String,
+    item: XtreamModels.StreamItem
+): Int {
+    val title = normalizeSearch(item.title)
+    val row = normalizeSearch(displayRowTitle(rowTitle))
+    val category = normalizeSearch(item.categoryId)
+    val year = normalizeSearch(item.year)
+    val extension = normalizeSearch(item.extension)
+    val combined = listOf(title, row, category, year, extension).filter { it.isNotBlank() }.joinToString(" ")
+    if (combined.isBlank() || tokens.any { token -> !combined.contains(token) }) {
+        return 0
+    }
+    return when {
+        title == cleanQuery -> 120
+        title.startsWith(cleanQuery) -> 100
+        title.contains(cleanQuery) -> 85
+        tokens.all { token -> title.contains(token) } -> 70
+        row.contains(cleanQuery) -> 45
+        year == cleanQuery -> 35
+        else -> 25
+    }
+}
+
+private fun comparatorForSearchSort(
+    sort: CatalogSort
+): Comparator<Pair<String, XtreamModels.StreamItem>> =
+    when (sort) {
+        CatalogSort.RECENT -> compareByDescending<Pair<String, XtreamModels.StreamItem>> {
+            it.second.addedTimestamp.toLongOrNull() ?: 0L
+        }.thenBy { it.second.title.lowercase(Locale.US) }
+        CatalogSort.RATING -> compareByDescending<Pair<String, XtreamModels.StreamItem>> {
+            numericRating(it.second.rating)
+        }.thenBy { it.second.title.lowercase(Locale.US) }
+        CatalogSort.ALPHA -> compareBy { it.second.title.lowercase(Locale.US) }
+    }
+
+private fun normalizeSearch(value: String?): String {
+    val normalized = Normalizer.normalize(value.orEmpty().lowercase(Locale.FRANCE), Normalizer.Form.NFD)
+    return normalized
+        .replace(SearchMarksRegex, "")
+        .replace(SearchSeparatorRegex, " ")
+        .trim()
 }
 
 private fun emptyStateSubtitle(state: MainUiState): String =

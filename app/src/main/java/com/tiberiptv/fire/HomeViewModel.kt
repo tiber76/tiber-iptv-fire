@@ -308,6 +308,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         autoRefreshJob = viewModelScope.launch {
+            delay(AUTO_REFRESH_START_DELAY_MS)
             val credentials = withContext(Dispatchers.IO) { credentialStore.load() }
             if (!credentials.isComplete()) {
                 return@launch
@@ -470,6 +471,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         private const val STARTUP_LOADER_MS = 1_500L
         private const val CATALOG_AUTO_REFRESH_AFTER_MS = 24L * 60L * 60L * 1000L
+        private const val AUTO_REFRESH_START_DELAY_MS = 2_500L
         private const val AUTO_REFRESH_BETWEEN_MODES_MS = 250L
     }
 

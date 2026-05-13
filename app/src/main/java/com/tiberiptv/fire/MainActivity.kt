@@ -8,9 +8,10 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -161,7 +162,7 @@ class MainActivity : ComponentActivity() {
                     onClearImageCache = viewModel::clearImageCache,
                     onClearPreloadCache = viewModel::clearPreloadCache,
                     onClearCatalogCache = viewModel::clearCatalogCache,
-                    onChooseDownloadFolder = { downloadTreeLauncher.launch(null) },
+                    onChooseDownloadFolder = { launchDownloadTreePicker(downloadTreeLauncher) },
                     onClearDownloadFolder = viewModel::clearDownloadTreeUri,
                     onHome = { finish() },
                     onSettings = viewModel::openSettings,
@@ -177,6 +178,18 @@ class MainActivity : ComponentActivity() {
                     }
                 )
             }
+        }
+    }
+
+    private fun launchDownloadTreePicker(launcher: ActivityResultLauncher<Uri?>) {
+        try {
+            launcher.launch(null)
+        } catch (_: Exception) {
+            Toast.makeText(
+                this,
+                "Sélecteur de dossier indisponible sur cette Fire Stick.",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 

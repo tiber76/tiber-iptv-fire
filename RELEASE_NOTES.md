@@ -1,5 +1,33 @@
 # Release notes
 
+## Tiber IPTV 0.3.7
+
+Version corrective Fire Stick pour eviter le redemarrage de l'app si le selecteur de dossier Android est absent.
+
+### Correction
+
+- Le bouton `Choisir dossier USB` ne laisse plus crasher l'application si Fire OS ne fournit pas de selecteur de dossier compatible.
+- Un message indique maintenant que le selecteur est indisponible sur l'appareil.
+
+### Notes techniques
+
+- Package Android conserve: `com.tiberiptv.fire`.
+- Version: `0.3.7`.
+- Version code: `40`.
+- L'APK release est signe avec le keystore local du projet.
+
+### Installation
+
+Installer l'APK `tiber-iptv-0.3.7-40-release.apk` depuis la release GitHub.
+
+Sur Fire Stick deja connecte en ADB:
+
+```sh
+adb install -r tiber-iptv-0.3.7-40-release.apk
+```
+
+L'installation avec `-r` remplace l'ancienne version sans supprimer les donnees locales de l'application.
+
 ## Tiber IPTV 0.3.6
 
 Version corrective Fire Stick pour les cles USB disponibles uniquement en stockage externe/media.

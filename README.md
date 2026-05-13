@@ -6,8 +6,8 @@ L'application ne fournit aucun flux, aucune playlist et aucun acces IPTV.
 
 ## Version actuelle
 
-- Version officielle: `0.3.5`
-- Version code: `38`
+- Version officielle: `0.3.6`
+- Version code: `39`
 - Plateformes ciblees: Fire TV / Android TV, avec compatibilite Android classique a valider separement.
 
 ## Fonctionnalites principales
@@ -52,7 +52,7 @@ Depuis l'APK release GitHub:
 
 1. Installer l'application `Downloader` sur Fire TV.
 2. Ouvrir le lien de la release GitHub.
-3. Telecharger l'APK `tiber-iptv-0.3.5-38-release.apk`.
+3. Telecharger l'APK `tiber-iptv-0.3.6-39-release.apk`.
 4. Autoriser l'installation depuis `Downloader` si Fire OS le demande.
 5. Installer l'APK.
 
@@ -60,7 +60,7 @@ Depuis ADB:
 
 ```sh
 adb connect <ip-du-fire-stick>:5555
-adb install -r app/build/outputs/apk/release/tiber-iptv-0.3.5-38-release.apk
+adb install -r app/build/outputs/apk/release/tiber-iptv-0.3.6-39-release.apk
 ```
 
 `adb install -r` remplace l'ancienne version sans supprimer le stockage local tant que le package reste `com.tiberiptv.fire`.
@@ -74,7 +74,7 @@ adb install -r app/build/outputs/apk/release/tiber-iptv-0.3.5-38-release.apk
 APK debug:
 
 ```text
-app/build/outputs/apk/debug/tiber-iptv-0.3.5-38-debug.apk
+app/build/outputs/apk/debug/tiber-iptv-0.3.6-39-debug.apk
 ```
 
 ## Build release signe

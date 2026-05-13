@@ -471,7 +471,7 @@ internal fun displayRating(vararg values: String?): String? {
 
 internal fun downloadedSize(context: Context, item: XtreamModels.StreamItem): Long {
     val store = AppStateStore(context)
-    return DownloadStorage.downloadedSize(context, item, store.downloadPath(item))
+    return DownloadStorage.downloadedSize(context, item, store.downloadPath(item), store.downloadTreeUri())
 }
 
 internal fun compactDetailText(detail: XtreamModels.ItemDetail): String {

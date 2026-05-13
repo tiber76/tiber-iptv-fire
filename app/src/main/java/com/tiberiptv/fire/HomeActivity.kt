@@ -158,11 +158,12 @@ class HomeActivity : ComponentActivity() {
         val stateStore = AppStateStore(this)
         val storedPath = stateStore.downloadPath(item)
         val localFile = DownloadStorage.existingFile(this, item, storedPath)
+        val localDocument = DownloadStorage.existingDocument(this, item, storedPath, stateStore.downloadTreeUri())
         val playbackUrl: String
         val fallbackUrl: String
         val remoteGuardLabel: String
-        if (localFile != null) {
-            playbackUrl = Uri.fromFile(localFile).toString()
+        if (localDocument != null || localFile != null) {
+            playbackUrl = localDocument?.uri?.toString() ?: Uri.fromFile(localFile!!).toString()
             fallbackUrl = ""
             remoteGuardLabel = ""
         } else {

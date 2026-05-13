@@ -3,11 +3,13 @@ package com.tiberiptv.fire
 import android.app.Application
 import android.net.Uri
 import android.os.SystemClock
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
@@ -35,7 +37,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var activePreloadSession: PreloadStreamServer.Session? = null
     private var activePreloadItem: XtreamModels.StreamItem? = null
     private var activeDownloadConnection: HttpURLConnection? = null
-    private var activeDownloadTarget: File? = null
+    private var activeDownloadTarget: DownloadWriteTarget? = null
     @Volatile private var downloadCancelRequested = false
     @Volatile private var preloadCancelRequested = false
 
@@ -51,7 +53,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             storageTotalBytes = initialStorage.totalBytes,
             storageDownloadBytes = initialStorage.downloadBytes,
             storagePosterCacheBytes = initialStorage.posterCacheBytes,
-            storageTamponCacheBytes = initialStorage.tamponCacheBytes
+            storageTamponCacheBytes = initialStorage.tamponCacheBytes,
+            downloadTreeUri = stateStore.downloadTreeUri()
         )
     )
     val uiState: StateFlow<MainUiState> = _uiState
@@ -77,10 +80,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val storage = storageInfo()
         _uiState.update {
             it.withStorage(storage).copy(
+                downloadTreeUri = stateStore.downloadTreeUri(),
                 settingsVisible = true,
                 loading = false,
                 error = null,
                 status = "Réglages"
+            )
+        }
+    }
+
+    fun setDownloadTreeUri(uri: String) {
+        stateStore.setDownloadTreeUri(uri)
+        val storage = storageInfo()
+        _uiState.update {
+            it.withStorage(storage).copy(
+                downloadTreeUri = uri,
+                status = "Stockage USB sélectionné",
+                error = null
+            )
+        }
+    }
+
+    fun clearDownloadTreeUri() {
+        stateStore.setDownloadTreeUri("")
+        val storage = storageInfo()
+        _uiState.update {
+            it.withStorage(storage).copy(
+                downloadTreeUri = "",
+                status = "Stockage interne sélectionné",
+                error = null
             )
         }
     }
@@ -300,9 +328,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun knownContentSize(item: XtreamModels.StreamItem): Long {
-        val local = downloadedFile(item)
-        if (local != null) {
-            return local.length()
+        val localSize = downloadedSize(item)
+        if (localSize >= 0L) {
+            return localSize
         }
         return stateStore.cachedContentLength(item)
     }
@@ -314,13 +342,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun openItem(item: XtreamModels.StreamItem) {
         prioritizeUserRemoteAction()
         val qualityHint = qualityHintFor(item)
-        val local = downloadedFile(item)
+        val localSize = downloadedSize(item)
         _uiState.update {
             it.copy(
                 selectedItem = item,
                 selectedQualityHint = qualityHint,
-                selectedSizeBytes = if (local != null) local.length() else stateStore.cachedContentLength(item),
-                selectedDownloaded = local != null,
+                selectedSizeBytes = if (localSize >= 0L) localSize else stateStore.cachedContentLength(item),
+                selectedDownloaded = localSize >= 0L,
                 selectedResumePositionMs = stateStore.resumePosition(item),
                 selectedDetail = null,
                 seriesInfo = null,
@@ -397,10 +425,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return PlaybackRequest(preloadSession.localUrl(), "", RemoteLabels.BUFFER, bufferedPlayback = true)
         }
         val api = api ?: return null
-        val local = downloadedFile(item)
+        val local = downloadedPlaybackUri(item)
         if (local != null) {
             stateStore.addHistory(item)
-            return PlaybackRequest(Uri.fromFile(local).toString(), "", "")
+            return PlaybackRequest(local.toString(), "", "")
         }
         if (stateStore.downloadPath(item).isNotEmpty()) {
             _uiState.update {
@@ -451,7 +479,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        if (downloadedFile(item) != null) {
+        if (downloadedSize(item) >= 0L) {
             _uiState.update { it.copy(status = "Déjà téléchargé") }
             return
         }
@@ -709,7 +737,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun refreshSelectedPlaybackState() {
         val item = _uiState.value.selectedItem ?: return
-        val local = downloadedFile(item)
+        val localSize = downloadedSize(item)
         val resumePosition = stateStore.resumePosition(item)
         _uiState.update { state ->
             if (state.selectedItem?.key() != item.key()) {
@@ -717,8 +745,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 state.copy(
                     selectedResumePositionMs = resumePosition,
-                    selectedDownloaded = local != null,
-                    selectedSizeBytes = if (local != null) local.length() else state.selectedSizeBytes
+                    selectedDownloaded = localSize >= 0L,
+                    selectedSizeBytes = if (localSize >= 0L) localSize else state.selectedSizeBytes
                 )
             }
         }
@@ -751,11 +779,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val api = api ?: return
         val storage = storageInfo()
         val knownBytes = stateStore.cachedContentLength(item)
-        var target = localFile(
+        var target = localDownloadTarget(
             item,
             if (knownBytes > 0L) requiredDownloadBytes(knownBytes) else StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES
         )
-        val targetAvailableBytes = availableBytes(target.parentFile ?: appContext.filesDir)
+        val targetAvailableBytes = target.availableBytes()
         if (targetAvailableBytes in 0 until StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES) {
             _uiState.update {
                 it.withStorage(storage).copy(
@@ -798,7 +826,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val url = api.streamUrl(item, null)
                     performDownload(item, target, url, -1L)
                 }
-                stateStore.saveDownload(item, target.absolutePath, System.currentTimeMillis())
+                stateStore.saveDownload(item, target.storedPath, System.currentTimeMillis())
                 stateStore.saveContentLength(item, target.length())
                 val updatedStorage = storageInfo()
                 _uiState.update {
@@ -883,8 +911,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             cancelDownload()
             return
         }
-        val file = downloadedFile(item) ?: localFile(item)
-        val deleted = !file.exists() || file.delete()
+        val document = downloadedDocument(item)
+        val file = if (document == null) downloadedFile(item) ?: localFile(item) else null
+        val deleted = when {
+            document != null -> document.delete()
+            file != null -> !file.exists() || file.delete()
+            else -> true
+        }
         stateStore.removeDownload(item)
         val storage = storageInfo()
         _uiState.update {
@@ -1051,7 +1084,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun downloadRows(): List<XtreamModels.ContentRow> {
-        val items = stateStore.downloads().filter { item -> downloadedFile(item) != null }
+        val items = stateStore.downloads().filter { item -> downloadedSize(item) >= 0L }
         return if (items.isEmpty()) emptyList() else listOf(XtreamModels.ContentRow("Téléchargés", items))
     }
 
@@ -1137,10 +1170,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun downloadedFile(item: XtreamModels.StreamItem): File? =
         DownloadStorage.existingFile(appContext, item, stateStore.downloadPath(item))
 
+    private fun downloadedDocument(item: XtreamModels.StreamItem): DocumentFile? =
+        DownloadStorage.existingDocument(appContext, item, stateStore.downloadPath(item), stateStore.downloadTreeUri())
+
+    private fun downloadedPlaybackUri(item: XtreamModels.StreamItem): Uri? =
+        downloadedDocument(item)?.uri ?: downloadedFile(item)?.let(Uri::fromFile)
+
+    private fun downloadedSize(item: XtreamModels.StreamItem): Long =
+        DownloadStorage.downloadedSize(appContext, item, stateStore.downloadPath(item), stateStore.downloadTreeUri())
+
     private fun localFile(item: XtreamModels.StreamItem, minAvailableBytes: Long = 0L): File =
         DownloadStorage.targetFile(appContext, item, stateStore.downloadPath(item), minAvailableBytes)
 
-    private fun performDownload(item: XtreamModels.StreamItem, initialTarget: File, url: String, expectedBytes: Long): File {
+    private fun localDownloadTarget(item: XtreamModels.StreamItem, minAvailableBytes: Long = 0L): DownloadWriteTarget {
+        val treeUri = stateStore.downloadTreeUri()
+        if (treeUri.isNotBlank()) {
+            val document = DownloadStorage.targetDocument(appContext, item, treeUri)
+            if (document != null) {
+                return DownloadWriteTarget.Document(
+                    document = document,
+                    availableBytesProvider = { DownloadStorage.availableBytesForTree(appContext, treeUri) }
+                )
+            }
+        }
+        return DownloadWriteTarget.FileTarget(localFile(item, minAvailableBytes))
+    }
+
+    private fun performDownload(
+        item: XtreamModels.StreamItem,
+        initialTarget: DownloadWriteTarget,
+        url: String,
+        expectedBytes: Long
+    ): DownloadWriteTarget {
         var target = initialTarget
         val connection = URL(url).openConnection() as HttpURLConnection
         activeDownloadConnection = connection
@@ -1157,11 +1218,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (total > 0L) {
                 stateStore.saveContentLength(item, total)
                 val required = requiredDownloadBytes(total)
-                var targetAvailableBytes = availableBytes(target.parentFile ?: appContext.filesDir)
+                var targetAvailableBytes = target.availableBytes()
                 if (!hasEnoughStorageForDownload(targetAvailableBytes, total)) {
-                    val alternative = localFile(item, required)
-                    val alternativeAvailableBytes = availableBytes(alternative.parentFile ?: appContext.filesDir)
-                    if (alternative.absolutePath != target.absolutePath &&
+                    val alternative = localDownloadTarget(item, required)
+                    val alternativeAvailableBytes = alternative.availableBytes()
+                    if (alternative.storedPath != target.storedPath &&
                         hasEnoughStorageForDownload(alternativeAvailableBytes, total)
                     ) {
                         target = alternative
@@ -1181,10 +1242,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 _uiState.update { it.copy(downloadTotal = total) }
             }
-            target.parentFile?.mkdirs()
+            target.prepare()
             activeDownloadTarget = target
             BufferedInputStream(connection.inputStream).use { input ->
-                FileOutputStream(target).use { output ->
+                target.openOutputStream(appContext).use { output ->
                     val buffer = ByteArray(128 * 1024)
                     var written = 0L
                     val startedAtMs = SystemClock.elapsedRealtime()
@@ -1200,7 +1261,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             nextStorageCheck += StoragePolicy.DOWNLOAD_STORAGE_CHECK_INTERVAL_BYTES
                             val storage = storageInfo()
                             _uiState.update { it.withStorage(storage) }
-                            if (availableBytes(target.parentFile ?: appContext.filesDir) < StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES) {
+                            val currentAvailable = target.availableBytes()
+                            if (currentAvailable in 0 until StoragePolicy.DOWNLOAD_SPACE_MARGIN_BYTES) {
                                 throw IllegalStateException("Stockage presque plein.")
                             }
                         }
@@ -1241,17 +1303,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         DownloadStorage.availableBytes(directory)
 
     private fun storageInfo(): StorageInfo {
+        val treeUri = stateStore.downloadTreeUri()
         val directory = DownloadStorage.preferredDirectory(appContext)
+        val treeAvailableBytes = DownloadStorage.availableBytesForTree(appContext, treeUri)
+        val treeTotalBytes = DownloadStorage.totalBytesForTree(appContext, treeUri)
         val posterCache = File(appContext.cacheDir, CacheDirectories.POSTERS)
         val legacyPosterCache = File(appContext.cacheDir, CacheDirectories.LEGACY_POSTERS)
         val tamponCache = File(appContext.cacheDir, CacheDirectories.BUFFER)
-        val downloadBytes = DownloadStorage.directories(appContext).sumOf { downloadDirectory -> directorySize(downloadDirectory) }
+        val directoryDownloadBytes = DownloadStorage.directories(appContext).sumOf { downloadDirectory -> directorySize(downloadDirectory) }
+        val trackedDownloadBytes = stateStore.downloads().sumOf { item ->
+            downloadedSize(item).coerceAtLeast(0L)
+        }
         val posterBytes = directorySize(posterCache) + directorySize(legacyPosterCache)
         val tamponBytes = directorySize(tamponCache)
         return StorageInfo(
-            availableBytes = DownloadStorage.availableBytes(directory),
-            totalBytes = DownloadStorage.totalBytes(directory),
-            downloadBytes = downloadBytes,
+            availableBytes = if (treeAvailableBytes >= 0L) treeAvailableBytes else DownloadStorage.availableBytes(directory),
+            totalBytes = if (treeTotalBytes >= 0L) treeTotalBytes else DownloadStorage.totalBytes(directory),
+            downloadBytes = max(directoryDownloadBytes, trackedDownloadBytes),
             posterCacheBytes = posterBytes,
             tamponCacheBytes = tamponBytes
         )
@@ -1289,6 +1357,40 @@ private data class IndexedCatalogRows(
     val rows: List<XtreamModels.ContentRow>,
     val searchIndex: CatalogSearchIndex
 )
+
+private sealed class DownloadWriteTarget {
+    abstract val storedPath: String
+    abstract fun length(): Long
+    abstract fun availableBytes(): Long
+    abstract fun prepare()
+    abstract fun openOutputStream(context: android.content.Context): OutputStream
+    abstract fun delete(): Boolean
+
+    data class FileTarget(private val file: File) : DownloadWriteTarget() {
+        override val storedPath: String = file.absolutePath
+        override fun length(): Long = file.length()
+        override fun availableBytes(): Long = DownloadStorage.availableBytes(file.parentFile ?: file)
+        override fun prepare() {
+            file.parentFile?.mkdirs()
+        }
+        override fun openOutputStream(context: android.content.Context): OutputStream = FileOutputStream(file)
+        override fun delete(): Boolean = !file.exists() || file.delete()
+    }
+
+    data class Document(
+        private val document: DocumentFile,
+        private val availableBytesProvider: () -> Long
+    ) : DownloadWriteTarget() {
+        override val storedPath: String = document.uri.toString()
+        override fun length(): Long = document.length()
+        override fun availableBytes(): Long = availableBytesProvider()
+        override fun prepare() = Unit
+        override fun openOutputStream(context: android.content.Context): OutputStream =
+            context.contentResolver.openOutputStream(document.uri, "wt")
+                ?: throw IllegalStateException("Dossier USB non accessible")
+        override fun delete(): Boolean = document.delete()
+    }
+}
 
 private fun indexedRows(rows: List<XtreamModels.ContentRow>): IndexedCatalogRows =
     IndexedCatalogRows(rows, CatalogSearchIndex.fromRows(rows))

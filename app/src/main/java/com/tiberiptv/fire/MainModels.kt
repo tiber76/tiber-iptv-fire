@@ -111,7 +111,8 @@ data class MainUiState(
     val storageTotalBytes: Long = -1L,
     val storageDownloadBytes: Long = -1L,
     val storagePosterCacheBytes: Long = -1L,
-    val storageTamponCacheBytes: Long = -1L
+    val storageTamponCacheBytes: Long = -1L,
+    val downloadTreeUri: String = ""
 )
 
 data class StorageInfo(

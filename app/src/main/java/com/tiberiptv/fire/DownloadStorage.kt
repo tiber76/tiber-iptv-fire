@@ -1,14 +1,19 @@
 package com.tiberiptv.fire
 
 import android.content.Context
+import android.net.Uri
 import android.os.Build
 import android.os.StatFs
 import android.os.storage.StorageManager
 import android.os.storage.StorageVolume
+import androidx.documentfile.provider.DocumentFile
 import java.io.File
 
 internal object DownloadStorage {
     fun existingFile(context: Context, item: XtreamModels.StreamItem, storedPath: String): File? {
+        if (isContentUri(storedPath)) {
+            return null
+        }
         val storedFile = if (storedPath.isNotEmpty()) File(storedPath) else null
         if (storedFile?.isFile == true) {
             return storedFile
@@ -28,8 +33,43 @@ internal object DownloadStorage {
         existingFile(context, item, storedPath)
             ?: File(preferredDirectory(context, minAvailableBytes), fileName(item))
 
-    fun downloadedSize(context: Context, item: XtreamModels.StreamItem, storedPath: String): Long =
-        existingFile(context, item, storedPath)?.length() ?: -1L
+    fun downloadedSize(
+        context: Context,
+        item: XtreamModels.StreamItem,
+        storedPath: String,
+        treeUri: String = ""
+    ): Long =
+        existingDocument(context, item, storedPath, treeUri)?.length()
+            ?: existingFile(context, item, storedPath)?.length()
+            ?: -1L
+
+    fun existingDocument(
+        context: Context,
+        item: XtreamModels.StreamItem,
+        storedPath: String,
+        treeUri: String
+    ): DocumentFile? {
+        if (isContentUri(storedPath)) {
+            val document = DocumentFile.fromSingleUri(context, Uri.parse(storedPath))
+            if (document?.exists() == true) {
+                return document
+            }
+        }
+        return treeDocument(context, treeUri)?.findFile(fileName(item))?.takeIf { document -> document.exists() }
+    }
+
+    fun targetDocument(context: Context, item: XtreamModels.StreamItem, treeUri: String): DocumentFile? {
+        val tree = treeDocument(context, treeUri) ?: return null
+        val name = fileName(item)
+        return tree.findFile(name)?.takeIf { document -> document.exists() }
+            ?: tree.createFile(mimeType(item), name)
+    }
+
+    fun availableBytesForTree(context: Context, treeUri: String): Long =
+        volumeRootForTree(context, treeUri)?.let(::availableBytes) ?: -1L
+
+    fun totalBytesForTree(context: Context, treeUri: String): Long =
+        volumeRootForTree(context, treeUri)?.let(::totalBytes) ?: -1L
 
     fun directories(context: Context, create: Boolean = true): List<File> {
         val externalDirectories = context.getExternalFilesDirs(null)
@@ -123,6 +163,51 @@ internal object DownloadStorage {
             null
         } catch (_: SecurityException) {
             null
+        }
+
+    private fun treeDocument(context: Context, treeUri: String): DocumentFile? =
+        if (isContentUri(treeUri)) {
+            DocumentFile.fromTreeUri(context, Uri.parse(treeUri))
+        } else {
+            null
+        }
+
+    private fun volumeRootForTree(context: Context, treeUri: String): File? {
+        if (!isContentUri(treeUri)) {
+            return null
+        }
+        val volumeId = treeVolumeId(Uri.parse(treeUri))
+        if (volumeId.equals("primary", ignoreCase = true)) {
+            return context.getExternalFilesDir(null)?.let(::storageRoot)
+        }
+        return storageManagerVolumeRoots(context).firstOrNull { root -> root.name.equals(volumeId, ignoreCase = true) }
+            ?: File("/storage/$volumeId").takeIf { root -> root.exists() }
+    }
+
+    private fun storageRoot(file: File): File =
+        generateSequence(file) { current -> current.parentFile }
+            .lastOrNull { current -> current.parentFile?.absolutePath == "/storage" }
+            ?: file
+
+    private fun treeVolumeId(treeUri: Uri): String {
+        val treeDocumentId = try {
+            android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+        } catch (_: IllegalArgumentException) {
+            ""
+        }
+        return treeDocumentId.substringBefore(':', treeDocumentId)
+    }
+
+    private fun isContentUri(value: String): Boolean =
+        value.startsWith("content://", ignoreCase = true)
+
+    private fun mimeType(item: XtreamModels.StreamItem): String =
+        when (item.extension.lowercase()) {
+            "mkv" -> "video/x-matroska"
+            "avi" -> "video/x-msvideo"
+            "mov" -> "video/quicktime"
+            "ts" -> "video/mp2t"
+            else -> "video/mp4"
         }
 
     private fun fileName(item: XtreamModels.StreamItem): String =

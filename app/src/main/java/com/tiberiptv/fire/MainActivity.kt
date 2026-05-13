@@ -8,6 +8,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -110,6 +111,17 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val downloadTreeLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri != null) {
+                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                try {
+                    contentResolver.takePersistableUriPermission(uri, flags)
+                    ViewModelHolder.current?.setDownloadTreeUri(uri.toString())
+                } catch (exception: SecurityException) {
+                    Toast.makeText(this, "Dossier USB non autorisé: ${exception.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
         PreloadStreamServer.cleanupCache(this)
         enterImmersiveMode()
         setContent {
@@ -149,6 +161,8 @@ class MainActivity : ComponentActivity() {
                     onClearImageCache = viewModel::clearImageCache,
                     onClearPreloadCache = viewModel::clearPreloadCache,
                     onClearCatalogCache = viewModel::clearCatalogCache,
+                    onChooseDownloadFolder = { downloadTreeLauncher.launch(null) },
+                    onClearDownloadFolder = viewModel::clearDownloadTreeUri,
                     onHome = { finish() },
                     onSettings = viewModel::openSettings,
                     onCloseSettings = { viewModel.loadMode(Mode.MOVIES, false) },
@@ -278,6 +292,8 @@ private fun MainRoute(
     onClearImageCache: () -> Unit,
     onClearPreloadCache: () -> Unit,
     onClearCatalogCache: () -> Unit,
+    onChooseDownloadFolder: () -> Unit,
+    onClearDownloadFolder: () -> Unit,
     onHome: () -> Unit,
     onSettings: () -> Unit,
     onCloseSettings: () -> Unit,
@@ -322,6 +338,8 @@ private fun MainRoute(
                     onClearImageCache = onClearImageCache,
                     onClearPreloadCache = onClearPreloadCache,
                     onClearCatalogCache = onClearCatalogCache,
+                    onChooseDownloadFolder = onChooseDownloadFolder,
+                    onClearDownloadFolder = onClearDownloadFolder,
                     onLogout = onLogout
                 )
             } else if (state.selectedItem != null) {
@@ -1523,6 +1541,8 @@ private fun SettingsScreen(
     onClearImageCache: () -> Unit,
     onClearPreloadCache: () -> Unit,
     onClearCatalogCache: () -> Unit,
+    onChooseDownloadFolder: () -> Unit,
+    onClearDownloadFolder: () -> Unit,
     onLogout: () -> Unit
 ) {
     Column(
@@ -1611,9 +1631,28 @@ private fun SettingsScreen(
 
         SettingsSectionCard(
             title = "Stockage et caches",
-            subtitle = "Nettoie les données temporaires sans supprimer tes films téléchargés."
+            subtitle = "Choisis un dossier USB si Fire OS expose la clé comme stockage externe."
         ) {
             StorageOverviewRows(state)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onChooseDownloadFolder) {
+                    Text(if (state.downloadTreeUri.isBlank()) "Choisir dossier USB" else "Changer dossier USB")
+                }
+                if (state.downloadTreeUri.isNotBlank()) {
+                    OutlinedButton(onClick = onClearDownloadFolder) {
+                        Text("Stockage auto")
+                    }
+                }
+            }
+            Text(
+                if (state.downloadTreeUri.isBlank()) {
+                    "Mode auto: l'app utilise les volumes Android accessibles directement."
+                } else {
+                    "Dossier USB actif: les prochains téléchargements seront écrits dans le dossier choisi."
+                },
+                color = Color(0xFFC9C6E4),
+                style = MaterialTheme.typography.bodySmall
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(onClick = onClearImageCache) {
                     Text("Vider affiches")

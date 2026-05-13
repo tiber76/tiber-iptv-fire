@@ -1,7 +1,10 @@
 package com.tiberiptv.fire
 
 import android.content.Context
+import android.os.Build
 import android.os.StatFs
+import android.os.storage.StorageManager
+import android.os.storage.StorageVolume
 import java.io.File
 
 internal object DownloadStorage {
@@ -34,9 +37,17 @@ internal object DownloadStorage {
             .map { directory -> File(directory, "downloads") }
         val externalMediaDirectories = externalMediaDirectories(context)
             .map { directory -> File(directory, "downloads") }
+        val storageManagerDirectories = storageManagerVolumeRoots(context)
+            .let { roots -> appSpecificDownloadDirectories(roots, context.packageName) }
         val fallbackDirectory = File(context.filesDir, "downloads")
-        return usableDirectories(externalDirectories + externalMediaDirectories + fallbackDirectory, create)
+        return usableDirectories(
+            externalDirectories + externalMediaDirectories + storageManagerDirectories + fallbackDirectory,
+            create
+        )
     }
+
+    internal fun appSpecificDownloadDirectories(volumeRoots: List<File>, packageName: String): List<File> =
+        volumeRoots.map { volumeRoot -> File(volumeRoot, "Android/data/$packageName/files/downloads") }
 
     internal fun usableDirectories(candidates: List<File>, create: Boolean = true): List<File> =
         candidates
@@ -84,6 +95,34 @@ internal object DownloadStorage {
             context.externalMediaDirs.filterNotNull()
         } catch (_: LinkageError) {
             emptyList()
+        }
+
+    private fun storageManagerVolumeRoots(context: Context): List<File> {
+        val storageManager = context.getSystemService(Context.STORAGE_SERVICE) as? StorageManager ?: return emptyList()
+        return try {
+            storageManager.storageVolumes.mapNotNull { volume -> storageVolumeDirectory(volume) }
+        } catch (_: LinkageError) {
+            emptyList()
+        } catch (_: SecurityException) {
+            emptyList()
+        }
+    }
+
+    private fun storageVolumeDirectory(volume: StorageVolume): File? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            volume.directory
+        } else {
+            storageVolumeDirectoryByReflection(volume)
+        }
+
+    private fun storageVolumeDirectoryByReflection(volume: StorageVolume): File? =
+        try {
+            val path = volume.javaClass.getMethod("getPath").invoke(volume) as? String
+            path?.let(::File)
+        } catch (_: ReflectiveOperationException) {
+            null
+        } catch (_: SecurityException) {
+            null
         }
 
     private fun fileName(item: XtreamModels.StreamItem): String =

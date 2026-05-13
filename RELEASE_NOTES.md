@@ -1,5 +1,34 @@
 # Release notes
 
+## Tiber IPTV 0.3.5
+
+Version corrective Fire Stick pour les cles USB que Fire OS ne remonte pas dans les repertoires externes standards de l'application.
+
+### Corrections
+
+- APK declarant `installLocation="preferExternal"` pour permettre a Fire OS de deplacer/utiliser l'application avec le stockage USB configure en stockage interne.
+- Detection stockage etendue aux volumes exposes par `StorageManager`, avec reconstruction du dossier app-specifique `Android/data/com.tiberiptv.fire/files/downloads`.
+- Conservation de la detection precedente via `getExternalFilesDirs` et `externalMediaDirs`.
+
+### Notes techniques
+
+- Package Android conserve: `com.tiberiptv.fire`.
+- Version: `0.3.5`.
+- Version code: `38`.
+- L'APK release est signe avec le keystore local du projet.
+
+### Installation
+
+Installer l'APK `tiber-iptv-0.3.5-38-release.apk` depuis la release GitHub.
+
+Sur Fire Stick deja connecte en ADB:
+
+```sh
+adb install -r tiber-iptv-0.3.5-38-release.apk
+```
+
+L'installation avec `-r` remplace l'ancienne version sans supprimer les donnees locales de l'application.
+
 ## Tiber IPTV 0.3.4
 
 Version corrective Fire Stick / Android TV pour mieux detecter les stockages USB externes disponibles pour les telechargements.

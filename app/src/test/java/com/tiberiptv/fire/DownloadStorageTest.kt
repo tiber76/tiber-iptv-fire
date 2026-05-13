@@ -81,6 +81,18 @@ class DownloadStorageTest {
         )
     }
 
+    @Test
+    fun appSpecificDownloadDirectoriesUsePackageScopedPath() {
+        val usbRoot = File("/storage/1234-5678")
+
+        val directories = DownloadStorage.appSpecificDownloadDirectories(listOf(usbRoot), "com.tiberiptv.fire")
+
+        assertEquals(
+            listOf("/storage/1234-5678/Android/data/com.tiberiptv.fire/files/downloads"),
+            directories.map { directory -> directory.absolutePath }
+        )
+    }
+
     private fun streamItem(id: String, title: String): XtreamModels.StreamItem =
         XtreamModels.StreamItem(
             id = id,

@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
+    private val appContext = application.applicationContext
     private val credentialStore = CredentialStore(application)
     private val stateStore by lazy { AppStateStore(application) }
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -461,7 +462,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             movieCount = stateStore.cachedItemCount(Mode.MOVIES.name),
             seriesCount = stateStore.cachedItemCount(Mode.SERIES.name),
             favoriteCount = stateStore.favorites().size,
-            downloadCount = stateStore.downloads().size,
+            downloadCount = stateStore.downloads().count { item ->
+                DownloadStorage.existingFile(appContext, item, stateStore.downloadPath(item)) != null
+            },
             heroItem = recent?.let { item ->
                 HomeHeroItem(
                     title = item.title,

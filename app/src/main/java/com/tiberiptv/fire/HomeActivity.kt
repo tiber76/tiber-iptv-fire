@@ -157,18 +157,15 @@ class HomeActivity : ComponentActivity() {
         PosterLoader.pauseRemoteLoading()
         val stateStore = AppStateStore(this)
         val storedPath = stateStore.downloadPath(item)
-        val localFile = storedPath.takeIf { it.isNotBlank() }?.let(::File)
+        val localFile = DownloadStorage.existingFile(this, item, storedPath)
         val playbackUrl: String
         val fallbackUrl: String
         val remoteGuardLabel: String
-        if (localFile?.isFile == true) {
+        if (localFile != null) {
             playbackUrl = Uri.fromFile(localFile).toString()
             fallbackUrl = ""
             remoteGuardLabel = ""
         } else {
-            if (storedPath.isNotBlank()) {
-                stateStore.removeDownload(item)
-            }
             val credentials = CredentialStore(this).load()
             if (!credentials.isComplete()) {
                 Toast.makeText(this, "Compte Xtream absent.", Toast.LENGTH_LONG).show()

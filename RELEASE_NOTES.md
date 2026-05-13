@@ -1,5 +1,37 @@
 # Release notes
 
+## Tiber IPTV 0.3.3
+
+Version officielle Fire Stick / Android TV orientee fluidite catalogue et corrections UI telecommande.
+
+### Nouveautes et ameliorations
+
+- Catalogue plus fluide avec plus de 10 000 contenus: chargement du cache local et construction des lignes premium hors thread UI.
+- Recherche catalogue optimisee: index memoire pre-calcule, score de recherche calcule une seule fois par item, normalisation sans regex sur le chemin chaud.
+- Popin de recherche simplifiee pour Fire TV: clavier ouvert directement, validation via touche lecture/search/entree, retour qui masque le clavier puis ferme la popin.
+- Home plus propre: selecteurs Films / Series / Chaines TV Live recolores avec accents de section au lieu du bloc gris de focus.
+- Pictogramme `Recharger` du catalogue redessine pour rester lisible dans les boutons compacts.
+
+### Notes techniques
+
+- Package Android conserve: `com.tiberiptv.fire`.
+- Version: `0.3.3`.
+- Version code: `36`.
+- Regle remote conservee: une seule action Xtream a la fois via `RemoteActionGuard`.
+- L'APK release est signe avec le keystore local du projet.
+
+### Installation
+
+Installer l'APK `tiber-iptv-0.3.3-36-release.apk` depuis la release GitHub.
+
+Sur Fire Stick deja connecte en ADB:
+
+```sh
+adb install -r tiber-iptv-0.3.3-36-release.apk
+```
+
+L'installation avec `-r` remplace l'ancienne version sans supprimer les donnees locales de l'application.
+
 ## Tiber IPTV 0.3.2
 
 Version officielle Fire Stick / Android TV avec corrections player, catalogue et stockage.

@@ -8,11 +8,26 @@ import kotlin.math.max
 
 private val RatingFractionRegex = Regex("""(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)""")
 private val RatingNumberRegex = Regex("""\d+(?:\.\d+)?""")
-private val SearchMarksRegex = Regex("\\p{Mn}+")
-private val SearchSeparatorRegex = Regex("[^a-z0-9]+")
 
 internal fun filteredRows(
     rows: List<XtreamModels.ContentRow>,
+    query: String,
+    filter4k: Boolean,
+    filterHighRating: Boolean,
+    filterRecentYear: Boolean,
+    sort: CatalogSort
+): List<XtreamModels.ContentRow> =
+    filteredRows(
+        index = CatalogSearchIndex.fromRows(rows),
+        query = query,
+        filter4k = filter4k,
+        filterHighRating = filterHighRating,
+        filterRecentYear = filterRecentYear,
+        sort = sort
+    )
+
+internal fun filteredRows(
+    index: CatalogSearchIndex,
     query: String,
     filter4k: Boolean,
     filterHighRating: Boolean,
@@ -23,28 +38,37 @@ internal fun filteredRows(
     val recentYearFloor = Calendar.getInstance().get(Calendar.YEAR) - 1
     if (clean.isNotEmpty()) {
         val searchTokens = clean.split(' ').filter { token -> token.isNotBlank() }
-        val items = rows
+        val items = index.entries
             .asSequence()
-            .flatMap { row -> row.items.asSequence().map { item -> row.title to item } }
-            .filter { (rowTitle, item) -> searchScore(clean, searchTokens, rowTitle, item) > 0 }
-            .distinctBy { (_, item) -> item.key() }
+            .mapNotNull { entry ->
+                val score = searchScore(clean, searchTokens, entry)
+                if (score > 0) SearchResult(entry, score) else null
+            }
+            .distinctBy { result -> result.entry.itemKey }
             .sortedWith(
-                compareByDescending<Pair<String, XtreamModels.StreamItem>> { (rowTitle, item) ->
-                    searchScore(clean, searchTokens, rowTitle, item)
-                }.then(comparatorForSearchSort(sort))
+                compareByDescending<SearchResult> { result -> result.score }
+                    .then(comparatorForSearchResultSort(sort))
             )
-            .map { (_, item) -> item }
+            .map { result -> result.entry.item }
             .toList()
-        return if (items.isEmpty()) emptyList() else listOf(XtreamModels.ContentRow("Résultats recherche", items))
+        return if (items.isEmpty()) {
+            emptyList()
+        } else {
+            listOf(XtreamModels.ContentRow("Résultats recherche", items))
+        }
     }
-    return rows.mapNotNull { row ->
-        val isPremiumRow = premiumRowKind(row.title) != null
-        val items = row.items
-            .filter { item ->
-                itemMatchesFilters(item, row.title, filter4k, filterHighRating, filterRecentYear, recentYearFloor)
+    return index.rowEntries.mapNotNull { row ->
+        val items = row.entries
+            .asSequence()
+            .filter { entry ->
+                entryMatchesFilters(entry, filter4k, filterHighRating, filterRecentYear, recentYearFloor)
             }
             .let { filteredItems ->
-                if (isPremiumRow) filteredItems else filteredItems.sortedForCatalog(sort)
+                if (row.isPremium) {
+                    filteredItems.map { entry -> entry.item }.toList()
+                } else {
+                    filteredItems.sortedForCatalog(sort)
+                }
             }
         if (items.isEmpty()) null else XtreamModels.ContentRow(row.title, items)
     }
@@ -88,6 +112,25 @@ internal fun searchScore(
     }
 }
 
+private fun searchScore(
+    cleanQuery: String,
+    tokens: List<String>,
+    entry: CatalogSearchEntry
+): Int {
+    if (entry.combinedSearchText.isBlank() || tokens.any { token -> !entry.combinedSearchText.contains(token) }) {
+        return 0
+    }
+    return when {
+        entry.titleSearch == cleanQuery -> 120
+        entry.titleSearch.startsWith(cleanQuery) -> 100
+        entry.titleSearch.contains(cleanQuery) -> 85
+        tokens.all { token -> entry.titleSearch.contains(token) } -> 70
+        entry.rowSearch.contains(cleanQuery) -> 45
+        entry.yearSearch == cleanQuery -> 35
+        else -> 25
+    }
+}
+
 internal fun comparatorForSearchSort(
     sort: CatalogSort
 ): Comparator<Pair<String, XtreamModels.StreamItem>> =
@@ -101,12 +144,164 @@ internal fun comparatorForSearchSort(
         CatalogSort.ALPHA -> compareBy { it.second.title.lowercase(Locale.US) }
     }
 
+private data class SearchResult(
+    val entry: CatalogSearchEntry,
+    val score: Int
+)
+
+class CatalogSearchIndex private constructor(
+    internal val rowEntries: List<CatalogRowEntries>,
+    internal val entries: List<CatalogSearchEntry>
+) {
+    companion object {
+        val EMPTY = CatalogSearchIndex(emptyList(), emptyList())
+
+        fun fromRows(rows: List<XtreamModels.ContentRow>): CatalogSearchIndex {
+            if (rows.isEmpty()) {
+                return EMPTY
+            }
+            val allEntries = ArrayList<CatalogSearchEntry>(rows.sumOf { row -> row.items.size })
+            val rowEntries = rows.map { row ->
+                val visibleRowTitle = displayRowTitle(row.title)
+                val rowSearch = normalizeSearch(visibleRowTitle)
+                val entries = row.items.map { item ->
+                    val titleSearch = normalizeSearch(item.title)
+                    val categorySearch = normalizeSearch(item.categoryId)
+                    val yearSearch = normalizeSearch(item.year)
+                    val extensionSearch = normalizeSearch(item.extension)
+                    CatalogSearchEntry(
+                        item = item,
+                        itemKey = item.key(),
+                        titleSearch = titleSearch,
+                        rowSearch = rowSearch,
+                        yearSearch = yearSearch,
+                        combinedSearchText = combinedSearchText(
+                            titleSearch,
+                            rowSearch,
+                            categorySearch,
+                            yearSearch,
+                            extensionSearch
+                        ),
+                        lowerTitle = item.title.lowercase(Locale.US),
+                        addedTimestamp = item.addedTimestamp.toLongOrNull() ?: 0L,
+                        rating = numericRating(item.rating),
+                        year = item.year.toIntOrNull(),
+                        ultraHd = isUltraHd(item, row.title)
+                    )
+                }
+                allEntries.addAll(entries)
+                CatalogRowEntries(
+                    title = row.title,
+                    isPremium = premiumRowKind(row.title) != null,
+                    entries = entries
+                )
+            }
+            return CatalogSearchIndex(rowEntries, allEntries)
+        }
+    }
+}
+
+internal data class CatalogRowEntries(
+    val title: String,
+    val isPremium: Boolean,
+    val entries: List<CatalogSearchEntry>
+)
+
+internal data class CatalogSearchEntry(
+    val item: XtreamModels.StreamItem,
+    val itemKey: String,
+    val titleSearch: String,
+    val rowSearch: String,
+    val yearSearch: String,
+    val combinedSearchText: String,
+    val lowerTitle: String,
+    val addedTimestamp: Long,
+    val rating: Float,
+    val year: Int?,
+    val ultraHd: Boolean
+)
+
+private fun combinedSearchText(
+    title: String,
+    row: String,
+    category: String,
+    year: String,
+    extension: String
+): String {
+    val output = StringBuilder(title.length + row.length + category.length + year.length + extension.length + 4)
+    appendSearchPart(output, title)
+    appendSearchPart(output, row)
+    appendSearchPart(output, category)
+    appendSearchPart(output, year)
+    appendSearchPart(output, extension)
+    return output.toString()
+}
+
+private fun appendSearchPart(output: StringBuilder, value: String) {
+    if (value.isBlank()) {
+        return
+    }
+    if (output.isNotEmpty()) {
+        output.append(' ')
+    }
+    output.append(value)
+}
+
+private fun comparatorForSearchResultSort(
+    sort: CatalogSort
+): Comparator<SearchResult> =
+    when (sort) {
+        CatalogSort.RECENT -> compareByDescending<SearchResult> {
+            it.entry.addedTimestamp
+        }.thenBy { it.entry.lowerTitle }
+        CatalogSort.RATING -> compareByDescending<SearchResult> {
+            it.entry.rating
+        }.thenBy { it.entry.lowerTitle }
+        CatalogSort.ALPHA -> compareBy { it.entry.lowerTitle }
+    }
+
+private fun Sequence<CatalogSearchEntry>.sortedForCatalog(sort: CatalogSort): List<XtreamModels.StreamItem> =
+    when (sort) {
+        CatalogSort.RECENT -> sortedWith(
+            compareByDescending<CatalogSearchEntry> { it.addedTimestamp }
+                .thenBy { it.lowerTitle }
+        )
+        CatalogSort.RATING -> sortedWith(
+            compareByDescending<CatalogSearchEntry> { it.rating }
+                .thenBy { it.lowerTitle }
+        )
+        CatalogSort.ALPHA -> sortedBy { it.lowerTitle }
+    }.map { entry -> entry.item }.toList()
+
+private fun entryMatchesFilters(
+    entry: CatalogSearchEntry,
+    filter4k: Boolean,
+    filterHighRating: Boolean,
+    filterRecentYear: Boolean,
+    recentYearFloor: Int
+): Boolean =
+    (!filter4k || entry.ultraHd) &&
+        (!filterHighRating || entry.rating >= 7f) &&
+        (!filterRecentYear || entry.year?.let { year -> year >= recentYearFloor } == true)
+
 internal fun normalizeSearch(value: String?): String {
     val normalized = Normalizer.normalize(value.orEmpty().lowercase(Locale.FRANCE), Normalizer.Form.NFD)
-    return normalized
-        .replace(SearchMarksRegex, "")
-        .replace(SearchSeparatorRegex, " ")
-        .trim()
+    val output = StringBuilder(normalized.length)
+    var pendingSeparator = false
+    for (character in normalized) {
+        when {
+            Character.getType(character) == Character.NON_SPACING_MARK.toInt() -> Unit
+            character in 'a'..'z' || character in '0'..'9' -> {
+                if (pendingSeparator && output.isNotEmpty()) {
+                    output.append(' ')
+                }
+                output.append(character)
+                pendingSeparator = false
+            }
+            output.isNotEmpty() -> pendingSeparator = true
+        }
+    }
+    return output.toString()
 }
 
 internal fun emptyStateSubtitle(state: MainUiState): String =

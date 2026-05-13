@@ -71,6 +71,7 @@ enum class NetworkProfile(
 data class MainUiState(
     val mode: Mode = Mode.MOVIES,
     val rows: List<XtreamModels.ContentRow> = emptyList(),
+    val searchIndex: CatalogSearchIndex = CatalogSearchIndex.EMPTY,
     val query: String = "",
     val loading: Boolean = false,
     val catalogInitialized: Boolean = false,

@@ -1204,25 +1204,41 @@ private fun PremiumMiniSectionButton(
 ) {
     val shape = RoundedCornerShape(14.dp)
     var focused by remember { mutableStateOf(false) }
+    val focusScale by animateFloatAsState(
+        targetValue = if (focused) 1.012f else 1f,
+        label = "premiumMiniSectionFocusScale"
+    )
+    val cardBackground = Brush.horizontalGradient(
+        listOf(
+            accent.copy(alpha = if (focused) 0.28f else 0.16f),
+            Color(0xFF171B2D),
+            Color(0xFF151827)
+        )
+    )
     Surface(
         modifier = Modifier
             .height(height)
             .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = focusScale
+                scaleY = focusScale
+                shadowElevation = if (focused) 12f else 0f
+            }
             .onFocusChanged { focused = it.isFocused }
             .border(
-                width = if (focused) 2.dp else 1.dp,
-                color = if (focused) TvFocusColor else Color(0xFF343956),
+                width = if (focused) 3.dp else 1.dp,
+                color = if (focused) accent.copy(alpha = 0.95f) else accent.copy(alpha = 0.36f),
                 shape = shape
             )
             .clip(shape),
         shape = shape,
-        color = if (focused) TvFocusSurface else TvCardSurface,
+        color = Color.Transparent,
         contentColor = Color.White
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .background(if (focused) Color(0xFF20243A) else TvCardSurface)
+                .background(cardBackground)
                 .padding(end = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1246,7 +1262,7 @@ private fun PremiumMiniSectionButton(
                 Text(title, color = Color.White, fontWeight = FontWeight.Black, maxLines = 1)
                 Text(
                     subtitle,
-                    color = Color(0xFFD8DCF7),
+                    color = Color(0xFFE1E6FF),
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -1835,9 +1851,12 @@ private fun HomeRefreshButton(
         modifier = Modifier
             .width(if (compact) 118.dp else 128.dp)
             .height(if (compact) 32.dp else 34.dp),
+        border = BorderStroke(1.dp, accent.copy(alpha = if (enabled || refreshing) 0.72f else 0.28f)),
         colors = ButtonDefaults.outlinedButtonColors(
+            containerColor = accent.copy(alpha = if (enabled || refreshing) 0.08f else 0.02f),
             contentColor = accent,
-            disabledContentColor = if (refreshing) Color.White else Color(0xFF757A9B)
+            disabledContainerColor = accent.copy(alpha = if (refreshing) 0.12f else 0.03f),
+            disabledContentColor = if (refreshing) Color.White else Color(0xFF8D94BB)
         ),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
     ) {

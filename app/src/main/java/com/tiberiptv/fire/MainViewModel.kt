@@ -13,6 +13,7 @@ import java.net.URL
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -86,11 +87,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadMode(mode: Mode, forceRefresh: Boolean) {
         val resetCatalogControls = mode != _uiState.value.mode
+        loadJob?.cancel()
         if (mode == Mode.FAVORITES) {
+            val rows = favoriteRows()
             _uiState.update {
                 it.copy(
                     mode = mode,
-                    rows = favoriteRows(),
+                    rows = rows,
+                    searchIndex = CatalogSearchIndex.fromRows(rows),
                     query = if (resetCatalogControls) "" else it.query,
                     filter4k = if (resetCatalogControls) false else it.filter4k,
                     filterHighRating = if (resetCatalogControls) false else it.filterHighRating,
@@ -112,10 +116,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (mode == Mode.DOWNLOADS) {
             val storage = storageInfo()
+            val rows = downloadRows()
             _uiState.update {
                 it.withStorage(storage).copy(
                     mode = mode,
-                    rows = downloadRows(),
+                    rows = rows,
+                    searchIndex = CatalogSearchIndex.fromRows(rows),
                     query = if (resetCatalogControls) "" else it.query,
                     filter4k = if (resetCatalogControls) false else it.filter4k,
                     filterHighRating = if (resetCatalogControls) false else it.filterHighRating,
@@ -136,52 +142,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val cached = if (forceRefresh) emptyList() else stateStore.loadRows(mode.name)
-        if (cached.isNotEmpty()) {
-            _uiState.update {
-                it.copy(
-                    mode = mode,
-                    rows = withHistoryRow(mode, cached),
-                    query = if (resetCatalogControls) "" else it.query,
-                    filter4k = if (resetCatalogControls) false else it.filter4k,
-                    filterHighRating = if (resetCatalogControls) false else it.filterHighRating,
-                    filterRecentYear = if (resetCatalogControls) false else it.filterRecentYear,
-                    selectedItem = null,
-                    selectedQualityHint = "",
-                    selectedSizeBytes = -1L,
-                    selectedResumePositionMs = 0L,
-                    selectedDetail = null,
-                    seriesInfo = null,
-                    settingsVisible = false,
-                    loading = false,
-                    catalogInitialized = true,
-                    error = null,
-                    status = "Cache local"
-                )
-            }
-            return
-        }
-
-        val api = api
-        if (api == null) {
-            _uiState.update { it.copy(error = "Compte Xtream absent.", loading = false, catalogInitialized = true) }
-            return
-        }
-        if (!RemoteActionGuard.tryAcquire(RemoteLabels.sync(mode.label))) {
-            _uiState.update {
-                it.copy(
-                    mode = mode,
-                    settingsVisible = false,
-                    loading = false,
-                    catalogInitialized = true,
-                    error = UserFacingMessages.remoteBusy("Rechargement du catalogue"),
-                    status = "Action déjà en cours"
-                )
-            }
-            return
-        }
-
-        loadJob?.cancel()
         _uiState.update {
             it.copy(
                 mode = mode,
@@ -198,11 +158,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 selectedDetail = null,
                 seriesInfo = null,
                 settingsVisible = false,
-                status = "Synchronisation ${mode.label}..."
+                status = if (forceRefresh) "Synchronisation ${mode.label}..." else "Chargement ${mode.label}..."
             )
         }
         loadJob = viewModelScope.launch {
+            var remoteGuardAcquired = false
             try {
+                if (!forceRefresh) {
+                    val cached = withContext(Dispatchers.IO) { stateStore.loadRows(mode.name) }
+                    if (cached.isNotEmpty()) {
+                        val displayRows = withContext(Dispatchers.Default) {
+                            indexedRows(withHistoryRow(mode, cached))
+                        }
+                        _uiState.update {
+                            it.copy(
+                                rows = displayRows.rows,
+                                searchIndex = displayRows.searchIndex,
+                                loading = false,
+                                catalogInitialized = true,
+                                error = null,
+                                status = "Cache local"
+                            )
+                        }
+                        return@launch
+                    }
+                }
+
+                val api = api
+                if (api == null) {
+                    _uiState.update {
+                        it.copy(
+                            error = "Compte Xtream absent.",
+                            loading = false,
+                            catalogInitialized = true
+                        )
+                    }
+                    return@launch
+                }
+                if (!RemoteActionGuard.tryAcquire(RemoteLabels.sync(mode.label))) {
+                    _uiState.update {
+                        it.copy(
+                            settingsVisible = false,
+                            loading = false,
+                            catalogInitialized = true,
+                            error = UserFacingMessages.remoteBusy("Rechargement du catalogue"),
+                            status = "Action déjà en cours"
+                        )
+                    }
+                    return@launch
+                }
+                remoteGuardAcquired = true
+                _uiState.update { it.copy(status = "Synchronisation ${mode.label}...") }
+
                 val rows = withContext(Dispatchers.IO) { fetchRows(api, mode) }
                 if (rows.isEmpty()) {
                     _uiState.update {
@@ -215,10 +222,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     return@launch
                 }
-                stateStore.saveRows(mode.name, rows)
+                withContext(Dispatchers.IO) { stateStore.saveRows(mode.name, rows) }
+                val displayRows = withContext(Dispatchers.Default) {
+                    indexedRows(withHistoryRow(mode, rows))
+                }
                 _uiState.update {
                     it.copy(
-                        rows = withHistoryRow(mode, rows),
+                        rows = displayRows.rows,
+                        searchIndex = displayRows.searchIndex,
                         loading = false,
                         catalogInitialized = true,
                         selectedQualityHint = "",
@@ -228,6 +239,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         status = "Catalogue à jour"
                     )
                 }
+            } catch (exception: CancellationException) {
+                throw exception
             } catch (exception: Exception) {
                 _uiState.update {
                     it.copy(
@@ -238,7 +251,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             } finally {
-                RemoteActionGuard.release(RemoteLabels.sync(mode.label))
+                if (remoteGuardAcquired) {
+                    RemoteActionGuard.release(RemoteLabels.sync(mode.label))
+                }
             }
         }
     }
@@ -343,9 +358,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val added = stateStore.toggleFavorite(item)
         val keys = stateStore.favoriteKeys()
         _uiState.update {
+            val rows = if (it.mode == Mode.FAVORITES) favoriteRows() else it.rows
             it.copy(
                 favoriteKeys = keys,
-                rows = if (it.mode == Mode.FAVORITES) favoriteRows() else it.rows,
+                rows = rows,
+                searchIndex = it.searchIndexFor(rows),
                 selectedItem = if (it.mode == Mode.FAVORITES && !added) null else it.selectedItem,
                 selectedQualityHint = if (it.mode == Mode.FAVORITES && !added) "" else it.selectedQualityHint,
                 selectedDownloaded = if (it.mode == Mode.FAVORITES && !added) false else it.selectedDownloaded,
@@ -387,10 +404,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (stateStore.downloadPath(item).isNotEmpty()) {
             _uiState.update {
+                val rows = if (it.mode == Mode.DOWNLOADS) downloadRows() else it.rows
                 it.copy(
                     selectedDownloaded = false,
                     selectedSizeBytes = stateStore.cachedContentLength(item),
-                    rows = if (it.mode == Mode.DOWNLOADS) downloadRows() else it.rows,
+                    rows = rows,
+                    searchIndex = it.searchIndexFor(rows),
                     status = "Téléchargement absent du stockage, lecture en streaming"
                 )
             }
@@ -630,6 +649,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 activePreloadItem = null
                 val updatedStorage = storageInfo()
                 _uiState.update {
+                    val rows = if (it.mode == Mode.DOWNLOADS) downloadRows() else it.rows
                     it.withStorage(updatedStorage).copy(
                         preloadingItem = null,
                         preloadBytes = 0L,
@@ -637,7 +657,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         preloadCancelling = false,
                         preloadConverting = false,
                         selectedSizeBytes = target.length(),
-                        rows = if (it.mode == Mode.DOWNLOADS) downloadRows() else it.rows,
+                        rows = rows,
+                        searchIndex = it.searchIndexFor(rows),
                         status = "Téléchargement terminé depuis le préchargement"
                     )
                 }
@@ -781,6 +802,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 stateStore.saveContentLength(item, target.length())
                 val updatedStorage = storageInfo()
                 _uiState.update {
+                    val rows = if (it.mode == Mode.DOWNLOADS) downloadRows() else it.rows
                     it.withStorage(updatedStorage).copy(
                         downloadingItem = null,
                         downloadBytes = 0L,
@@ -789,7 +811,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         downloadCancelling = false,
                         selectedSizeBytes = target.length(),
                         selectedDownloaded = it.selectedItem?.key() == item.key() || it.selectedDownloaded,
-                        rows = if (it.mode == Mode.DOWNLOADS) downloadRows() else it.rows,
+                        rows = rows,
+                        searchIndex = it.searchIndexFor(rows),
                         status = "Téléchargement terminé"
                     )
                 }
@@ -865,8 +888,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         stateStore.removeDownload(item)
         val storage = storageInfo()
         _uiState.update {
+            val rows = if (it.mode == Mode.DOWNLOADS) downloadRows() else it.rows
             it.withStorage(storage).copy(
-                rows = if (it.mode == Mode.DOWNLOADS) downloadRows() else it.rows,
+                rows = rows,
+                searchIndex = it.searchIndexFor(rows),
                 selectedItem = null,
                 selectedQualityHint = "",
                 selectedSizeBytes = -1L,
@@ -959,8 +984,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val detail = withContext(Dispatchers.IO) { api.getMovieDetail(item.id) }
                 _uiState.update {
                     val ratedItem = item.withRating(detail.rating)
+                    val rows = rowsWithRating(it.rows, item, detail.rating)
                     it.copy(
-                        rows = rowsWithRating(it.rows, item, detail.rating),
+                        rows = rows,
+                        searchIndex = it.searchIndexFor(rows),
                         selectedItem = if (it.selectedItem?.key() == item.key()) ratedItem else it.selectedItem,
                         selectedDetail = detail
                     )
@@ -1257,3 +1284,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         items.take(limit)
 
 }
+
+private data class IndexedCatalogRows(
+    val rows: List<XtreamModels.ContentRow>,
+    val searchIndex: CatalogSearchIndex
+)
+
+private fun indexedRows(rows: List<XtreamModels.ContentRow>): IndexedCatalogRows =
+    IndexedCatalogRows(rows, CatalogSearchIndex.fromRows(rows))
+
+private fun MainUiState.searchIndexFor(rows: List<XtreamModels.ContentRow>): CatalogSearchIndex =
+    if (rows === this.rows) searchIndex else CatalogSearchIndex.fromRows(rows)

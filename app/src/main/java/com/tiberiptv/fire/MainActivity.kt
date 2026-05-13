@@ -588,7 +588,7 @@ private fun CatalogScreen(
                 CatalogSkeleton(Modifier.weight(1f))
             } else {
                 val rows = remember(
-                    state.rows,
+                    state.searchIndex,
                     state.query,
                     state.filter4k,
                     state.filterHighRating,
@@ -596,7 +596,7 @@ private fun CatalogScreen(
                     state.catalogSort
                 ) {
                     filteredRows(
-                        rows = state.rows,
+                        index = state.searchIndex,
                         query = state.query,
                         filter4k = state.filter4k,
                         filterHighRating = state.filterHighRating,
@@ -1893,9 +1893,22 @@ private fun TvActionIcon(icon: TvButtonIcon, tint: Color, modifier: Modifier = M
                 drawCircle(tint, radius = w * 0.34f, center = Offset(w * 0.50f, h * 0.50f), style = stroke)
             }
             TvButtonIcon.REFRESH -> {
-                drawArc(tint, startAngle = 35f, sweepAngle = 300f, useCenter = false, topLeft = Offset(w * 0.18f, h * 0.18f), size = Size(w * 0.64f, h * 0.64f), style = stroke)
-                drawLine(tint, Offset(w * 0.72f, h * 0.20f), Offset(w * 0.82f, h * 0.48f), strokeWidth = stroke.width, cap = StrokeCap.Round)
-                drawLine(tint, Offset(w * 0.72f, h * 0.20f), Offset(w * 0.48f, h * 0.28f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawArc(
+                    tint,
+                    startAngle = 45f,
+                    sweepAngle = 285f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.19f, h * 0.19f),
+                    size = Size(w * 0.62f, h * 0.62f),
+                    style = stroke
+                )
+                val arrow = Path().apply {
+                    moveTo(w * 0.75f, h * 0.18f)
+                    lineTo(w * 0.86f, h * 0.44f)
+                    lineTo(w * 0.59f, h * 0.36f)
+                    close()
+                }
+                drawPath(arrow, tint)
             }
             TvButtonIcon.PROFILE -> {
                 drawCircle(tint, radius = w * 0.16f, center = Offset(w * 0.50f, h * 0.34f), style = stroke)
@@ -2164,17 +2177,29 @@ private fun SearchDialog(
     onDismiss: () -> Unit
 ) {
     var draft by remember(query) { mutableStateOf(query) }
+    var keyboardVisible by remember { mutableStateOf(true) }
     val searchFieldFocusRequester = remember { FocusRequester() }
-    val searchButtonFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val submitSearch = {
         onSearch(draft)
         onDismiss()
     }
+    val hideKeyboard = {
+        keyboardController?.hide()
+        keyboardVisible = false
+    }
+    BackHandler {
+        if (keyboardVisible) {
+            hideKeyboard()
+        } else {
+            onDismiss()
+        }
+    }
     LaunchedEffect(Unit) {
         searchFieldFocusRequester.requestFocus()
         delay(120L)
         keyboardController?.show()
+        keyboardVisible = true
     }
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -2189,29 +2214,12 @@ private fun SearchDialog(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text("Recherche catalogue", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                    SearchDialogActionButton(
-                        label = "Rechercher",
-                        primary = true,
-                        onClick = submitSearch,
-                        modifier = Modifier
-                            .weight(1f)
-                            .focusRequester(searchButtonFocusRequester)
-                    )
-                    SearchDialogActionButton(
-                        label = "Effacer",
-                        onClick = {
-                            draft = ""
-                            onSearch("")
-                            onDismiss()
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-                    SearchDialogActionButton(label = "Fermer", onClick = onDismiss, modifier = Modifier.weight(1f))
-                }
                 OutlinedTextField(
                     value = draft,
-                    onValueChange = { draft = it },
+                    onValueChange = {
+                        draft = it
+                        keyboardVisible = true
+                    },
                     singleLine = true,
                     label = { Text("Titre, année, catégorie") },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -2232,12 +2240,23 @@ private fun SearchDialog(
                         .fillMaxWidth()
                         .onPreviewKeyEvent { event ->
                             val native = event.nativeKeyEvent
-                            if (event.type == KeyEventType.KeyDown && native.keyCode == KeyEvent.KEYCODE_DPAD_UP) {
-                                keyboardController?.hide()
-                                searchButtonFocusRequester.requestFocus()
-                                true
-                            } else {
-                                false
+                            if (event.type != KeyEventType.KeyDown) {
+                                return@onPreviewKeyEvent false
+                            }
+                            when {
+                                native.isSearchSubmitKey() -> {
+                                    submitSearch()
+                                    true
+                                }
+                                native.isBackKey() -> {
+                                    if (keyboardVisible) {
+                                        hideKeyboard()
+                                    } else {
+                                        onDismiss()
+                                    }
+                                    true
+                                }
+                                else -> false
                             }
                         }
                         .focusRequester(searchFieldFocusRequester)
@@ -2247,58 +2266,16 @@ private fun SearchDialog(
     }
 }
 
-@Composable
-private fun SearchDialogActionButton(
-    label: String,
-    modifier: Modifier = Modifier,
-    primary: Boolean = false,
-    onClick: () -> Unit
-) {
-    var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(12.dp)
-    val borderColor = when {
-        focused -> TvFocusOutline
-        primary -> Color(0xFF47D3C2)
-        else -> Color(0xFF4B5178)
-    }
-    val background = when {
-        focused -> TvFocusSurface
-        primary -> Color(0xFF173336)
-        else -> Color(0xFF1B1D30)
-    }
-    val textColor = when {
-        focused -> Color.White
-        primary -> Color(0xFF47D3C2)
-        else -> Color(0xFFE8EAFB)
-    }
+private fun android.view.KeyEvent.isSearchSubmitKey(): Boolean =
+    keyCode == KeyEvent.KEYCODE_MEDIA_PLAY ||
+        keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+        keyCode == KeyEvent.KEYCODE_SEARCH ||
+        keyCode == KeyEvent.KEYCODE_ENTER ||
+        keyCode == KeyEvent.KEYCODE_DPAD_CENTER
 
-    Surface(
-        modifier = modifier
-            .height(48.dp)
-            .onFocusChanged { focused = it.isFocused }
-            .graphicsLayer {
-                scaleX = if (focused) 1.025f else 1f
-                scaleY = if (focused) 1.025f else 1f
-                shadowElevation = if (focused) 14f else 0f
-            }
-            .clickable(onClick = onClick)
-            .focusable(),
-        shape = shape,
-        color = background,
-        border = BorderStroke(if (focused) 3.dp else 1.dp, borderColor)
-    ) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                text = label,
-                color = textColor,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Black,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
+private fun android.view.KeyEvent.isBackKey(): Boolean =
+    keyCode == KeyEvent.KEYCODE_BACK ||
+        keyCode == KeyEvent.KEYCODE_ESCAPE
 
 @Composable
 private fun StorageCompactMetric(label: String, bytes: Long, modifier: Modifier = Modifier) {

@@ -3,7 +3,6 @@ package com.tiberiptv.fire
 import android.content.Context
 import android.net.Uri
 import android.os.Build
-import android.os.Environment
 import android.os.StatFs
 import android.os.storage.StorageManager
 import android.os.storage.StorageVolume
@@ -80,29 +79,16 @@ internal object DownloadStorage {
             .map { directory -> File(directory, "downloads") }
         val storageManagerDirectories = storageManagerVolumeRoots(context)
             .let { roots -> appSpecificDownloadDirectories(roots, context.packageName) }
-        val publicExternalDirectories = publicExternalDownloadDirectories(context)
+        val appSpecificUsbDirectories = ExternalStorageManager(context).appSpecificUsbDirectories(create)
         val fallbackDirectory = File(context.filesDir, "downloads")
         return usableDirectories(
-            externalDirectories + externalMediaDirectories + storageManagerDirectories + publicExternalDirectories + fallbackDirectory,
+            externalDirectories + externalMediaDirectories + storageManagerDirectories + appSpecificUsbDirectories + fallbackDirectory,
             create
         )
     }
 
     internal fun appSpecificDownloadDirectories(volumeRoots: List<File>, packageName: String): List<File> =
         volumeRoots.map { volumeRoot -> File(volumeRoot, "Android/data/$packageName/files/downloads") }
-
-    fun hasPublicStorageAccess(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
-
-    internal fun publicExternalDownloadDirectories(context: Context): List<File> {
-        if (!hasPublicStorageAccess()) {
-            return emptyList()
-        }
-        val primaryRoot = context.getExternalFilesDir(null)?.let(::storageRoot)
-        return storageVolumeRoots(context)
-            .filter { root -> primaryRoot == null || root.absolutePath != primaryRoot.absolutePath }
-            .map { root -> File(root, "TiberIPTV/downloads") }
-    }
 
     internal fun usableDirectories(candidates: List<File>, create: Boolean = true): List<File> =
         candidates
@@ -162,16 +148,6 @@ internal object DownloadStorage {
             emptyList()
         }
     }
-
-    private fun storageVolumeRoots(context: Context): List<File> =
-        (storageManagerVolumeRoots(context) + storageDirectoryRoots())
-            .distinctBy { root -> root.absolutePath }
-            .filter { root -> root.exists() && root.isDirectory }
-
-    private fun storageDirectoryRoots(): List<File> =
-        File("/storage").listFiles()
-            ?.filter { file -> file.isDirectory && file.name != "self" && file.name != "emulated" }
-            .orEmpty()
 
     private fun storageVolumeDirectory(volume: StorageVolume): File? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {

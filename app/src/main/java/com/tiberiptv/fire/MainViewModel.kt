@@ -29,6 +29,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
     private val credentialStore = CredentialStore(appContext)
     private val stateStore = AppStateStore(appContext)
+    private val externalStorageManager = ExternalStorageManager(appContext)
     private var credentials = credentialStore.load()
     private var api = if (credentials.isComplete()) XtreamApi(credentials) else null
     private var loadJob: Job? = null
@@ -54,8 +55,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             storageDownloadBytes = initialStorage.downloadBytes,
             storagePosterCacheBytes = initialStorage.posterCacheBytes,
             storageTamponCacheBytes = initialStorage.tamponCacheBytes,
-            downloadTreeUri = stateStore.downloadTreeUri(),
-            publicStorageAccess = DownloadStorage.hasPublicStorageAccess()
+            downloadTreeUri = stateStore.downloadTreeUri()
         )
     )
     val uiState: StateFlow<MainUiState> = _uiState
@@ -82,7 +82,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.withStorage(storage).copy(
                 downloadTreeUri = stateStore.downloadTreeUri(),
-                publicStorageAccess = DownloadStorage.hasPublicStorageAccess(),
                 settingsVisible = true,
                 loading = false,
                 error = null,
@@ -92,12 +91,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setDownloadTreeUri(uri: String) {
-        stateStore.setDownloadTreeUri(uri)
+        val persisted = externalStorageManager.persistUsbAccess(Uri.parse(uri))
+        if (persisted.isFailure) {
+            _uiState.update { it.copy(error = "Dossier USB non autorisé", status = "Stockage USB refusé") }
+            return
+        }
         val storage = storageInfo()
         _uiState.update {
             it.withStorage(storage).copy(
                 downloadTreeUri = uri,
-                publicStorageAccess = DownloadStorage.hasPublicStorageAccess(),
                 status = "Stockage USB sélectionné",
                 error = null
             )
@@ -105,12 +107,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearDownloadTreeUri() {
-        stateStore.setDownloadTreeUri("")
+        externalStorageManager.revokeUsbAccess()
         val storage = storageInfo()
         _uiState.update {
             it.withStorage(storage).copy(
                 downloadTreeUri = "",
-                publicStorageAccess = DownloadStorage.hasPublicStorageAccess(),
                 status = "Stockage interne sélectionné",
                 error = null
             )

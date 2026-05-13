@@ -1,5 +1,37 @@
 # Release notes
 
+## Tiber IPTV 0.3.9
+
+Version Fire OS 8 / Fire TV Stick 4K Max 2nd gen orientee stockage USB externe.
+
+### Nouveautes et corrections
+
+- Ajout du module `ExternalStorageManager` avec logs `ExternalStorage`.
+- Detection Fire TV, SDK Android et constructeur au demarrage du module.
+- Enumeration des volumes USB via `StorageManager.storageVolumes`, filtres `isRemovable && !isPrimary`.
+- Lancement SAF cible sur le volume USB via `StorageVolume.createOpenDocumentTreeIntent()` quand Fire OS le permet.
+- Fallback explicite sur le dossier app-specific USB via `getExternalFilesDirs(null)` quand SAF est absent ou inutilisable.
+- Retrait de `MANAGE_EXTERNAL_STORAGE`, non souhaite pour Amazon Appstore.
+
+### Notes techniques
+
+- Package Android conserve: `com.tiberiptv.fire`.
+- Version: `0.3.9`.
+- Version code: `42`.
+- L'APK release est signe avec le keystore local du projet.
+
+### Installation
+
+Installer l'APK `tiber-iptv-0.3.9-42-release.apk` depuis la release GitHub.
+
+Sur Fire Stick deja connecte en ADB:
+
+```sh
+adb install -r tiber-iptv-0.3.9-42-release.apk
+```
+
+L'installation avec `-r` remplace l'ancienne version sans supprimer les donnees locales de l'application.
+
 ## Tiber IPTV 0.3.8
 
 Version de test Fire Stick pour les cles USB en stockage externe/media quand le selecteur de dossier Android est absent.

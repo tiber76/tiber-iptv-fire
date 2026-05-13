@@ -112,8 +112,7 @@ data class MainUiState(
     val storageDownloadBytes: Long = -1L,
     val storagePosterCacheBytes: Long = -1L,
     val storageTamponCacheBytes: Long = -1L,
-    val downloadTreeUri: String = "",
-    val publicStorageAccess: Boolean = false
+    val downloadTreeUri: String = ""
 )
 
 data class StorageInfo(
@@ -130,8 +129,7 @@ internal fun MainUiState.withStorage(storage: StorageInfo): MainUiState =
         storageTotalBytes = storage.totalBytes,
         storageDownloadBytes = storage.downloadBytes,
         storagePosterCacheBytes = storage.posterCacheBytes,
-        storageTamponCacheBytes = storage.tamponCacheBytes,
-        publicStorageAccess = DownloadStorage.hasPublicStorageAccess()
+        storageTamponCacheBytes = storage.tamponCacheBytes
     )
 
 data class PlaybackRequest(

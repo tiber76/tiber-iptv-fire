@@ -356,7 +356,7 @@ class AppStateStore(context: Context) {
         private const val KEY_NETWORK_PROFILE = "network_profile"
         private const val KEY_PLAYER_BUFFER_MS = "player_buffer_ms"
         private const val KEY_PLAYER_DISPLAY_MODE = "player_display_mode"
-        private const val KEY_DOWNLOAD_TREE_URI = "download_tree_uri"
+        private const val KEY_DOWNLOAD_TREE_URI = "usb_tree_uri"
         private const val KEY_PREFIX_ITEM = "item_"
         private const val KEY_PREFIX_RESUME = "resume_"
         private const val KEY_PREFIX_RESUME_DURATION = "resume_duration_"

@@ -1,10 +1,9 @@
 package com.tiberiptv.fire
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
@@ -106,6 +105,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.util.Locale
 import kotlinx.coroutines.delay
@@ -114,15 +114,10 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val downloadTreeLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-            if (uri != null) {
-                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                try {
-                    contentResolver.takePersistableUriPermission(uri, flags)
-                    ViewModelHolder.current?.setDownloadTreeUri(uri.toString())
-                } catch (exception: SecurityException) {
-                    Toast.makeText(this, "Dossier USB non autorisé: ${exception.message}", Toast.LENGTH_LONG).show()
-                }
+        val externalStorageManager = ExternalStorageManager(this)
+        val downloadTreeLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                result.data?.data?.let { uri -> ViewModelHolder.current?.setDownloadTreeUri(uri.toString()) }
             }
         }
         PreloadStreamServer.cleanupCache(this)
@@ -164,8 +159,7 @@ class MainActivity : ComponentActivity() {
                     onClearImageCache = viewModel::clearImageCache,
                     onClearPreloadCache = viewModel::clearPreloadCache,
                     onClearCatalogCache = viewModel::clearCatalogCache,
-                    onChooseDownloadFolder = { launchDownloadTreePicker(downloadTreeLauncher) },
-                    onRequestPublicStorageAccess = ::openPublicStorageAccessSettings,
+                    onChooseDownloadFolder = { launchDownloadTreePicker(externalStorageManager, downloadTreeLauncher) },
                     onClearDownloadFolder = viewModel::clearDownloadTreeUri,
                     onHome = { finish() },
                     onSettings = viewModel::openSettings,
@@ -184,39 +178,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun launchDownloadTreePicker(launcher: ActivityResultLauncher<Uri?>) {
-        try {
-            launcher.launch(null)
-        } catch (_: Exception) {
-            Toast.makeText(
-                this,
-                "Sélecteur indisponible. Essaie l'autorisation stockage externe.",
-                Toast.LENGTH_LONG
-            ).show()
-        }
-    }
-
-    private fun openPublicStorageAccessSettings() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            Toast.makeText(this, "Autorisation fichiers déjà gérée par Android.", Toast.LENGTH_LONG).show()
-            return
-        }
-        val appSettingsIntent = Intent(
-            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-            Uri.parse("package:$packageName")
-        )
-        val genericSettingsIntent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-        try {
-            startActivity(appSettingsIntent)
-        } catch (_: Exception) {
+    private fun launchDownloadTreePicker(
+        externalStorageManager: ExternalStorageManager,
+        launcher: ActivityResultLauncher<Intent>
+    ) {
+        lifecycleScope.launch {
+            val volumes = externalStorageManager.listUsbVolumes().getOrDefault(emptyList())
+            val volume = volumes.firstOrNull()
+            if (volume == null) {
+                Toast.makeText(this@MainActivity, "Aucun volume USB détecté par Android.", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val intent = externalStorageManager.createUsbAccessIntent(volume).getOrElse {
+                Toast.makeText(this@MainActivity, "Sélecteur USB indisponible sur Fire OS.", Toast.LENGTH_LONG).show()
+                return@launch
+            }
             try {
-                startActivity(genericSettingsIntent)
+                launcher.launch(intent)
             } catch (_: Exception) {
-                Toast.makeText(
-                    this,
-                    "Réglage stockage externe indisponible sur cette Fire Stick.",
-                    Toast.LENGTH_LONG
-                ).show()
+                Toast.makeText(this@MainActivity, "Sélecteur USB indisponible sur Fire OS.", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -334,7 +314,6 @@ private fun MainRoute(
     onClearPreloadCache: () -> Unit,
     onClearCatalogCache: () -> Unit,
     onChooseDownloadFolder: () -> Unit,
-    onRequestPublicStorageAccess: () -> Unit,
     onClearDownloadFolder: () -> Unit,
     onHome: () -> Unit,
     onSettings: () -> Unit,
@@ -381,7 +360,6 @@ private fun MainRoute(
                     onClearPreloadCache = onClearPreloadCache,
                     onClearCatalogCache = onClearCatalogCache,
                     onChooseDownloadFolder = onChooseDownloadFolder,
-                    onRequestPublicStorageAccess = onRequestPublicStorageAccess,
                     onClearDownloadFolder = onClearDownloadFolder,
                     onLogout = onLogout
                 )
@@ -1585,7 +1563,6 @@ private fun SettingsScreen(
     onClearPreloadCache: () -> Unit,
     onClearCatalogCache: () -> Unit,
     onChooseDownloadFolder: () -> Unit,
-    onRequestPublicStorageAccess: () -> Unit,
     onClearDownloadFolder: () -> Unit,
     onLogout: () -> Unit
 ) {
@@ -1679,9 +1656,6 @@ private fun SettingsScreen(
         ) {
             StorageOverviewRows(state)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = onRequestPublicStorageAccess) {
-                    Text(if (state.publicStorageAccess) "Accès fichiers OK" else "Autoriser stockage externe")
-                }
                 OutlinedButton(onClick = onChooseDownloadFolder) {
                     Text(if (state.downloadTreeUri.isBlank()) "Choisir dossier USB" else "Changer dossier USB")
                 }
@@ -1693,11 +1667,7 @@ private fun SettingsScreen(
             }
             Text(
                 if (state.downloadTreeUri.isBlank()) {
-                    if (state.publicStorageAccess) {
-                        "Accès fichiers actif: l'app essaiera aussi TiberIPTV/downloads sur les volumes externes."
-                    } else {
-                        "Mode auto: l'app utilise seulement les volumes Android accessibles directement."
-                    }
+                    "Mode auto: l'app utilise les dossiers app-specific Android accessibles directement, y compris USB si Fire OS les expose."
                 } else {
                     "Dossier USB actif: les prochains téléchargements seront écrits dans le dossier choisi."
                 },

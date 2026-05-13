@@ -54,7 +54,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             storageDownloadBytes = initialStorage.downloadBytes,
             storagePosterCacheBytes = initialStorage.posterCacheBytes,
             storageTamponCacheBytes = initialStorage.tamponCacheBytes,
-            downloadTreeUri = stateStore.downloadTreeUri()
+            downloadTreeUri = stateStore.downloadTreeUri(),
+            publicStorageAccess = DownloadStorage.hasPublicStorageAccess()
         )
     )
     val uiState: StateFlow<MainUiState> = _uiState
@@ -81,6 +82,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.withStorage(storage).copy(
                 downloadTreeUri = stateStore.downloadTreeUri(),
+                publicStorageAccess = DownloadStorage.hasPublicStorageAccess(),
                 settingsVisible = true,
                 loading = false,
                 error = null,
@@ -95,6 +97,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.withStorage(storage).copy(
                 downloadTreeUri = uri,
+                publicStorageAccess = DownloadStorage.hasPublicStorageAccess(),
                 status = "Stockage USB sélectionné",
                 error = null
             )
@@ -107,6 +110,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.withStorage(storage).copy(
                 downloadTreeUri = "",
+                publicStorageAccess = DownloadStorage.hasPublicStorageAccess(),
                 status = "Stockage interne sélectionné",
                 error = null
             )

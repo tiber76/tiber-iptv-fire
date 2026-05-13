@@ -2,7 +2,9 @@ package com.tiberiptv.fire
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
@@ -163,6 +165,7 @@ class MainActivity : ComponentActivity() {
                     onClearPreloadCache = viewModel::clearPreloadCache,
                     onClearCatalogCache = viewModel::clearCatalogCache,
                     onChooseDownloadFolder = { launchDownloadTreePicker(downloadTreeLauncher) },
+                    onRequestPublicStorageAccess = ::openPublicStorageAccessSettings,
                     onClearDownloadFolder = viewModel::clearDownloadTreeUri,
                     onHome = { finish() },
                     onSettings = viewModel::openSettings,
@@ -187,9 +190,34 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {
             Toast.makeText(
                 this,
-                "Sélecteur de dossier indisponible sur cette Fire Stick.",
+                "Sélecteur indisponible. Essaie l'autorisation stockage externe.",
                 Toast.LENGTH_LONG
             ).show()
+        }
+    }
+
+    private fun openPublicStorageAccessSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            Toast.makeText(this, "Autorisation fichiers déjà gérée par Android.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val appSettingsIntent = Intent(
+            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            Uri.parse("package:$packageName")
+        )
+        val genericSettingsIntent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+        try {
+            startActivity(appSettingsIntent)
+        } catch (_: Exception) {
+            try {
+                startActivity(genericSettingsIntent)
+            } catch (_: Exception) {
+                Toast.makeText(
+                    this,
+                    "Réglage stockage externe indisponible sur cette Fire Stick.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 
@@ -306,6 +334,7 @@ private fun MainRoute(
     onClearPreloadCache: () -> Unit,
     onClearCatalogCache: () -> Unit,
     onChooseDownloadFolder: () -> Unit,
+    onRequestPublicStorageAccess: () -> Unit,
     onClearDownloadFolder: () -> Unit,
     onHome: () -> Unit,
     onSettings: () -> Unit,
@@ -352,6 +381,7 @@ private fun MainRoute(
                     onClearPreloadCache = onClearPreloadCache,
                     onClearCatalogCache = onClearCatalogCache,
                     onChooseDownloadFolder = onChooseDownloadFolder,
+                    onRequestPublicStorageAccess = onRequestPublicStorageAccess,
                     onClearDownloadFolder = onClearDownloadFolder,
                     onLogout = onLogout
                 )
@@ -1555,6 +1585,7 @@ private fun SettingsScreen(
     onClearPreloadCache: () -> Unit,
     onClearCatalogCache: () -> Unit,
     onChooseDownloadFolder: () -> Unit,
+    onRequestPublicStorageAccess: () -> Unit,
     onClearDownloadFolder: () -> Unit,
     onLogout: () -> Unit
 ) {
@@ -1648,6 +1679,9 @@ private fun SettingsScreen(
         ) {
             StorageOverviewRows(state)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onRequestPublicStorageAccess) {
+                    Text(if (state.publicStorageAccess) "Accès fichiers OK" else "Autoriser stockage externe")
+                }
                 OutlinedButton(onClick = onChooseDownloadFolder) {
                     Text(if (state.downloadTreeUri.isBlank()) "Choisir dossier USB" else "Changer dossier USB")
                 }
@@ -1659,7 +1693,11 @@ private fun SettingsScreen(
             }
             Text(
                 if (state.downloadTreeUri.isBlank()) {
-                    "Mode auto: l'app utilise les volumes Android accessibles directement."
+                    if (state.publicStorageAccess) {
+                        "Accès fichiers actif: l'app essaiera aussi TiberIPTV/downloads sur les volumes externes."
+                    } else {
+                        "Mode auto: l'app utilise seulement les volumes Android accessibles directement."
+                    }
                 } else {
                     "Dossier USB actif: les prochains téléchargements seront écrits dans le dossier choisi."
                 },

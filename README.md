@@ -6,8 +6,8 @@ L'application ne fournit aucun flux, aucune playlist et aucun acces IPTV.
 
 ## Version actuelle
 
-- Version officielle: `0.3.3`
-- Version code: `36`
+- Version officielle: `0.3.4`
+- Version code: `37`
 - Plateformes ciblees: Fire TV / Android TV, avec compatibilite Android classique a valider separement.
 
 ## Fonctionnalites principales
@@ -52,7 +52,7 @@ Depuis l'APK release GitHub:
 
 1. Installer l'application `Downloader` sur Fire TV.
 2. Ouvrir le lien de la release GitHub.
-3. Telecharger l'APK `tiber-iptv-0.3.3-36-release.apk`.
+3. Telecharger l'APK `tiber-iptv-0.3.4-37-release.apk`.
 4. Autoriser l'installation depuis `Downloader` si Fire OS le demande.
 5. Installer l'APK.
 
@@ -60,7 +60,7 @@ Depuis ADB:
 
 ```sh
 adb connect <ip-du-fire-stick>:5555
-adb install -r app/build/outputs/apk/release/tiber-iptv-0.3.3-36-release.apk
+adb install -r app/build/outputs/apk/release/tiber-iptv-0.3.4-37-release.apk
 ```
 
 `adb install -r` remplace l'ancienne version sans supprimer le stockage local tant que le package reste `com.tiberiptv.fire`.
@@ -74,7 +74,7 @@ adb install -r app/build/outputs/apk/release/tiber-iptv-0.3.3-36-release.apk
 APK debug:
 
 ```text
-app/build/outputs/apk/debug/tiber-iptv-0.3.3-36-debug.apk
+app/build/outputs/apk/debug/tiber-iptv-0.3.4-37-debug.apk
 ```
 
 ## Build release signe
@@ -86,7 +86,7 @@ app/build/outputs/apk/debug/tiber-iptv-0.3.3-36-debug.apk
 Le script genere ou reutilise un keystore local ignore par Git dans `release/`, puis produit:
 
 ```text
-app/build/outputs/apk/release/tiber-iptv-0.3.3-36-release.apk
+app/build/outputs/apk/release/tiber-iptv-0.3.4-37-release.apk
 ```
 
 ## Tests
@@ -118,7 +118,7 @@ Les tests couvrent notamment la persistance du catalogue local et des compteurs 
 
 ## Prochaines etapes recommandees
 
-- Tester `0.3.3` sur Fire Stick 4K avec plusieurs profils reseau.
+- Tester `0.3.4` sur Fire Stick 4K avec plusieurs profils reseau.
 - Verifier les popins audio/sous-titres/format sur TV 4K.
 - Continuer le decoupage de `MainActivity` en composants Compose dedies.
 - Ajouter davantage de tests sur le parsing Xtream et le prechargement.

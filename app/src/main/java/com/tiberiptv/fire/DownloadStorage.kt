@@ -32,8 +32,14 @@ internal object DownloadStorage {
         val externalDirectories = context.getExternalFilesDirs(null)
             .filterNotNull()
             .map { directory -> File(directory, "downloads") }
+        val externalMediaDirectories = externalMediaDirectories(context)
+            .map { directory -> File(directory, "downloads") }
         val fallbackDirectory = File(context.filesDir, "downloads")
-        return (externalDirectories + fallbackDirectory)
+        return usableDirectories(externalDirectories + externalMediaDirectories + fallbackDirectory, create)
+    }
+
+    internal fun usableDirectories(candidates: List<File>, create: Boolean = true): List<File> =
+        candidates
             .distinctBy { directory -> directory.absolutePath }
             .filter { directory ->
                 if (create && !directory.exists()) {
@@ -41,7 +47,6 @@ internal object DownloadStorage {
                 }
                 directory.exists() || !create
             }
-    }
 
     fun preferredDirectory(context: Context, minAvailableBytes: Long = 0L): File {
         val directories = directories(context)
@@ -72,6 +77,14 @@ internal object DownloadStorage {
 
     private fun statTarget(directory: File): File =
         if (directory.exists()) directory else directory.parentFile ?: directory
+
+    @Suppress("DEPRECATION")
+    private fun externalMediaDirectories(context: Context): List<File> =
+        try {
+            context.externalMediaDirs.filterNotNull()
+        } catch (_: LinkageError) {
+            emptyList()
+        }
 
     private fun fileName(item: XtreamModels.StreamItem): String =
         "${safeFileName(item.title)}-${item.id}.${item.extension.ifEmpty { "mp4" }}"

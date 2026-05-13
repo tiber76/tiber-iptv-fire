@@ -64,6 +64,23 @@ class DownloadStorageTest {
         assertEquals("Film_t_bleu-42.mp4", target.name)
     }
 
+    @Test
+    fun usableDirectoriesKeepsExternalMediaCandidates() {
+        val externalFiles = File(context.filesDir, "external-files/downloads")
+        val externalMedia = File(context.filesDir, "external-media/downloads")
+        val fallback = File(context.filesDir, "downloads")
+
+        val directories = DownloadStorage.usableDirectories(
+            listOf(externalFiles, externalMedia, fallback, externalMedia),
+            create = false
+        )
+
+        assertEquals(
+            listOf(externalFiles.absolutePath, externalMedia.absolutePath, fallback.absolutePath),
+            directories.map { directory -> directory.absolutePath }
+        )
+    }
+
     private fun streamItem(id: String, title: String): XtreamModels.StreamItem =
         XtreamModels.StreamItem(
             id = id,

@@ -1,5 +1,34 @@
 # Release notes
 
+## Tiber IPTV 0.3.10
+
+Version corrective UI pour les reglages TV.
+
+### Corrections
+
+- Suppression du bouton `Choisir dossier USB` dans les reglages.
+- Ecran `Reglages` plus compact: marges reduites, cartes plus petites, profils reseau moins hauts.
+- Selecteur de profil reseau allege pour donner moins d'effet de zoom sur TV.
+
+### Notes techniques
+
+- Package Android conserve: `com.tiberiptv.fire`.
+- Version: `0.3.10`.
+- Version code: `43`.
+- L'APK release est signe avec le keystore local du projet.
+
+### Installation
+
+Installer l'APK `tiber-iptv-0.3.10-43-release.apk` depuis la release GitHub.
+
+Sur Fire Stick deja connecte en ADB:
+
+```sh
+adb install -r tiber-iptv-0.3.10-43-release.apk
+```
+
+L'installation avec `-r` remplace l'ancienne version sans supprimer les donnees locales de l'application.
+
 ## Tiber IPTV 0.3.9
 
 Version Fire OS 8 / Fire TV Stick 4K Max 2nd gen orientee stockage USB externe.

@@ -1,8 +1,6 @@
 package com.tiberiptv.fire
 
-import android.app.Activity
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.View
@@ -11,8 +9,6 @@ import android.widget.ImageView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -105,7 +101,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.util.Locale
 import kotlinx.coroutines.delay
@@ -114,12 +109,6 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val externalStorageManager = ExternalStorageManager(this)
-        val downloadTreeLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                result.data?.data?.let { uri -> ViewModelHolder.current?.setDownloadTreeUri(uri.toString()) }
-            }
-        }
         PreloadStreamServer.cleanupCache(this)
         enterImmersiveMode()
         setContent {
@@ -159,8 +148,6 @@ class MainActivity : ComponentActivity() {
                     onClearImageCache = viewModel::clearImageCache,
                     onClearPreloadCache = viewModel::clearPreloadCache,
                     onClearCatalogCache = viewModel::clearCatalogCache,
-                    onChooseDownloadFolder = { launchDownloadTreePicker(externalStorageManager, downloadTreeLauncher) },
-                    onClearDownloadFolder = viewModel::clearDownloadTreeUri,
                     onHome = { finish() },
                     onSettings = viewModel::openSettings,
                     onCloseSettings = { viewModel.loadMode(Mode.MOVIES, false) },
@@ -174,29 +161,6 @@ class MainActivity : ComponentActivity() {
                         finish()
                     }
                 )
-            }
-        }
-    }
-
-    private fun launchDownloadTreePicker(
-        externalStorageManager: ExternalStorageManager,
-        launcher: ActivityResultLauncher<Intent>
-    ) {
-        lifecycleScope.launch {
-            val volumes = externalStorageManager.listUsbVolumes().getOrDefault(emptyList())
-            val volume = volumes.firstOrNull()
-            if (volume == null) {
-                Toast.makeText(this@MainActivity, "Aucun volume USB détecté par Android.", Toast.LENGTH_LONG).show()
-                return@launch
-            }
-            val intent = externalStorageManager.createUsbAccessIntent(volume).getOrElse {
-                Toast.makeText(this@MainActivity, "Sélecteur USB indisponible sur Fire OS.", Toast.LENGTH_LONG).show()
-                return@launch
-            }
-            try {
-                launcher.launch(intent)
-            } catch (_: Exception) {
-                Toast.makeText(this@MainActivity, "Sélecteur USB indisponible sur Fire OS.", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -313,8 +277,6 @@ private fun MainRoute(
     onClearImageCache: () -> Unit,
     onClearPreloadCache: () -> Unit,
     onClearCatalogCache: () -> Unit,
-    onChooseDownloadFolder: () -> Unit,
-    onClearDownloadFolder: () -> Unit,
     onHome: () -> Unit,
     onSettings: () -> Unit,
     onCloseSettings: () -> Unit,
@@ -359,8 +321,6 @@ private fun MainRoute(
                     onClearImageCache = onClearImageCache,
                     onClearPreloadCache = onClearPreloadCache,
                     onClearCatalogCache = onClearCatalogCache,
-                    onChooseDownloadFolder = onChooseDownloadFolder,
-                    onClearDownloadFolder = onClearDownloadFolder,
                     onLogout = onLogout
                 )
             } else if (state.selectedItem != null) {
@@ -1562,24 +1522,22 @@ private fun SettingsScreen(
     onClearImageCache: () -> Unit,
     onClearPreloadCache: () -> Unit,
     onClearCatalogCache: () -> Unit,
-    onChooseDownloadFolder: () -> Unit,
-    onClearDownloadFolder: () -> Unit,
     onLogout: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(32.dp)
+            .padding(horizontal = 24.dp, vertical = 20.dp)
             .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Réglages", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+                Text("Réglages", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
                 Text(
                     "Connexion, stockage, player et télécommande",
                     color = Color(0xFFC9CDEB),
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
             DetailActionButton(label = "Retour", onClick = onClose, modifier = Modifier.width(128.dp))
@@ -1596,12 +1554,7 @@ private fun SettingsScreen(
             title = "Profil réseau",
             subtitle = "Choisis le comportement adapté à ton Wi-Fi, VPN ou débit."
         ) {
-            Text(
-                "OK sur une carte applique immédiatement le buffer, le format live et la taille du préchargement.",
-                color = Color(0xFFC9C6E4),
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 NetworkProfile.entries.forEach { profile ->
                     NetworkProfileCard(
                         profile = profile,
@@ -1652,25 +1605,11 @@ private fun SettingsScreen(
 
         SettingsSectionCard(
             title = "Stockage et caches",
-            subtitle = "Choisis un dossier USB si Fire OS expose la clé comme stockage externe."
+            subtitle = "Vue rapide de l'espace et nettoyage des caches."
         ) {
             StorageOverviewRows(state)
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = onChooseDownloadFolder) {
-                    Text(if (state.downloadTreeUri.isBlank()) "Choisir dossier USB" else "Changer dossier USB")
-                }
-                if (state.downloadTreeUri.isNotBlank()) {
-                    OutlinedButton(onClick = onClearDownloadFolder) {
-                        Text("Stockage auto")
-                    }
-                }
-            }
             Text(
-                if (state.downloadTreeUri.isBlank()) {
-                    "Mode auto: l'app utilise les dossiers app-specific Android accessibles directement, y compris USB si Fire OS les expose."
-                } else {
-                    "Dossier USB actif: les prochains téléchargements seront écrits dans le dossier choisi."
-                },
+                "Mode auto: l'app utilise les dossiers Android accessibles, y compris USB si Fire OS les expose.",
                 color = Color(0xFFC9C6E4),
                 style = MaterialTheme.typography.bodySmall
             )
@@ -1713,17 +1652,17 @@ private fun SettingsSectionCard(
 ) {
     Surface(
         color = Color(0xAA171B2E),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(10.dp),
         border = BorderStroke(1.dp, Color(0xFF343B60)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
-                Text(subtitle, color = Color(0xFF9EA7CD), style = MaterialTheme.typography.bodySmall)
+                Text(title, color = Color.White, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black)
+                Text(subtitle, color = Color(0xFF9EA7CD), style = MaterialTheme.typography.labelMedium)
             }
             content()
         }
@@ -1778,7 +1717,7 @@ private fun NetworkProfileCard(
     var focused by remember { mutableStateOf(false) }
     Surface(
         modifier = modifier
-            .height(118.dp)
+            .height(82.dp)
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
             .focusable(),
@@ -1794,36 +1733,36 @@ private fun NetworkProfileCard(
         )
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(
                     modifier = Modifier
-                        .size(10.dp)
+                        .size(8.dp)
                         .clip(RoundedCornerShape(999.dp))
                         .background(accent)
                 )
-                Text(profile.label, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text(
+                    profile.label,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
             Text(
                 "Buffer ${profile.bufferMs / 1000}s - Live ${profile.liveFormat.uppercase(Locale.US)}",
                 color = Color(0xFFE3E6FF),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelMedium,
                 maxLines = 1
             )
             Text(
                 "Précharge ${formatBytes(profile.preloadReadyBytes)}",
                 color = Color(0xFFB9C0E4),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelMedium,
                 maxLines = 1
-            )
-            Text(
-                profile.description,
-                color = Color(0xFF9EA7CD),
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -1994,8 +1933,8 @@ private fun SettingSwitch(title: String, subtitle: String, checked: Boolean, onC
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, color = Color.White, fontWeight = FontWeight.Bold)
-            Text(subtitle, color = Color(0xFFC9C6E4))
+            Text(title, color = Color.White, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            Text(subtitle, color = Color(0xFFC9C6E4), style = MaterialTheme.typography.bodySmall)
         }
         Switch(checked = checked, onCheckedChange = onChecked)
     }

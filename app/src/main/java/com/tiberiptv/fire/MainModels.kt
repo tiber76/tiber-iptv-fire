@@ -20,6 +20,7 @@ enum class Mode(val label: String) {
 enum class CatalogSort(val label: String) {
     RECENT("Ajout récent"),
     RATING("Note"),
+    RESUME("Reprise"),
     ALPHA("A-Z")
 }
 
@@ -72,6 +73,7 @@ data class MainUiState(
     val mode: Mode = Mode.MOVIES,
     val rows: List<XtreamModels.ContentRow> = emptyList(),
     val searchIndex: CatalogSearchIndex = CatalogSearchIndex.EMPTY,
+    val catalogRowsFiltered: Boolean = false,
     val query: String = "",
     val loading: Boolean = false,
     val catalogInitialized: Boolean = false,
@@ -82,6 +84,8 @@ data class MainUiState(
     val selectedSizeBytes: Long = -1L,
     val selectedDownloaded: Boolean = false,
     val selectedResumePositionMs: Long = 0L,
+    val selectedSeriesPreferenceKey: String = "",
+    val playbackRevision: Long = 0L,
     val filter4k: Boolean = false,
     val filterHighRating: Boolean = false,
     val filterRecentYear: Boolean = false,
@@ -89,6 +93,7 @@ data class MainUiState(
     val favoriteKeys: Set<String> = emptySet(),
     val selectedDetail: XtreamModels.ItemDetail? = null,
     val seriesInfo: XtreamModels.SeriesInfo? = null,
+    val selectedEpg: List<XtreamModels.EpgProgram> = emptyList(),
     val downloadingItem: XtreamModels.StreamItem? = null,
     val downloadBytes: Long = 0L,
     val downloadTotal: Long = -1L,
@@ -112,7 +117,45 @@ data class MainUiState(
     val storageDownloadBytes: Long = -1L,
     val storagePosterCacheBytes: Long = -1L,
     val storageTamponCacheBytes: Long = -1L,
-    val downloadTreeUri: String = ""
+    val downloadTreeUri: String = "",
+    val backgroundSyncStatus: BackgroundSyncStatus = BackgroundSyncStatus(),
+    val catalogDiagnostics: CatalogDiagnostics = CatalogDiagnostics(),
+    val serverDiagnostic: ServerDiagnostic = ServerDiagnostic(),
+    val pinnedCategoryKeys: Set<String> = emptySet(),
+    val hiddenCategoryKeys: Set<String> = emptySet(),
+    val customGroupCategoryKeys: Set<String> = emptySet()
+)
+
+data class BackgroundSyncStatus(
+    val state: String = BackgroundSyncStatusState.IDLE,
+    val startedAt: Long = 0L,
+    val finishedAt: Long = 0L,
+    val refreshedModes: Int = 0,
+    val message: String = ""
+)
+
+internal object BackgroundSyncStatusState {
+    const val IDLE = "idle"
+    const val QUEUED = "queued"
+    const val RUNNING = "running"
+    const val SUCCESS = "success"
+    const val FAILED = "failed"
+}
+
+data class CatalogDiagnostics(
+    val liveCount: Int = 0,
+    val liveUpdatedAt: Long = 0L,
+    val movieCount: Int = 0,
+    val movieUpdatedAt: Long = 0L,
+    val seriesCount: Int = 0,
+    val seriesUpdatedAt: Long = 0L
+)
+
+data class ServerDiagnostic(
+    val checkedAt: Long = 0L,
+    val latencyMs: Long = -1L,
+    val success: Boolean = false,
+    val message: String = ""
 )
 
 data class StorageInfo(
@@ -139,9 +182,25 @@ data class PlaybackRequest(
     val bufferedPlayback: Boolean = false
 )
 
+data class NextEpisodePlayback(
+    val title: String,
+    val itemKey: String,
+    val url: String,
+    val fallbackUrl: String
+)
+
+data class PlaybackNetworkPolicy(
+    val streamFormat: String?,
+    val fallbackFormat: String?,
+    val bufferMs: Int,
+    val retryOnAlternateLiveFormat: Boolean
+)
+
 internal enum class PremiumRowKind {
     HISTORY,
+    RECOMMENDED,
     FAVORITES,
+    CUSTOM_GROUP,
     FOUR_K,
     TOP_RATED,
     RECENT

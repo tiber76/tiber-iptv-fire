@@ -1,5 +1,50 @@
 # Release notes
 
+## Tiber IPTV 0.3.11
+
+Version orientee fluidite catalogue, images, player TV et coherence de release.
+
+### Nouveautes et ameliorations
+
+- Synchronisation catalogue plus robuste avec moteur dedie, execution planifiee en arriere-plan et etat de chargement visible pendant un rechargement.
+- Cache catalogue structure par types de contenus pour accelerer recherche, tri, filtres et lignes premium.
+- Chargement des affiches optimise: cache image dedie, normalisation des URLs, priorisation de la navigation et meilleure reprise apres scroll/lecture.
+- Fiches films et series enrichies avec image de fond quand une illustration est disponible.
+- Home et catalogue enrichis: progression visible sur `Continuer a regarder`, lancement direct depuis les miniatures de reprise et ligne `Films que vous pourriez aimer`.
+- Player TV ameliore: focus telecommande corrige autour de la barre de progression, bouton `Suite` accessible, prechargement depuis la position courante et reprise locale du tampon quand la taille distante est inconnue.
+- Lecture series type Netflix: enchainement episode suivant avec compte a rebours en fin de lecture et mise a jour des etats `LU` / `Suivant`.
+- Selection audio corrigee: le changement de piste est applique immediatement sans devoir bouger la barre de progression.
+- Reglages et catalogue polis pour TV: menu plus premium, composants selectionnes gardes visibles, header catalogue plus clair et libelle de statut rendu temporaire.
+- Miniatures episodes corrigees: cartes non coupees, lecture directe au clic et favori porte par la serie plutot que par l'episode.
+
+### Corrections
+
+- Correction du crash au clic sur `Reprendre` un episode depuis la home.
+- Correction de l'erreur `impossible de calculer la taille` lors du prechargement `Suite`.
+- Correction d'un crash LibVLC cause par une liste d'options immutable.
+- Retrait du prechargement sur les chaines live, non utile pour le direct.
+- Dedoublonnage et meilleurs badges qualite dans les resultats catalogue quand plusieurs formats existent.
+
+### Notes techniques
+
+- Package Android conserve: `com.tiberiptv.fire`.
+- Version: `0.3.11`.
+- Version code: `44`.
+- L'APK release est signe avec le keystore local du projet.
+- L'APK release est optimise Fire Stick: seules les ABI `armeabi-v7a` et `arm64-v8a` sont embarquees, ce qui reduit fortement la taille sans perte de qualite video.
+
+### Installation
+
+Installer l'APK `tiber-iptv-0.3.11-44-release.apk` depuis la release GitHub.
+
+Sur Fire Stick deja connecte en ADB:
+
+```sh
+adb install -r tiber-iptv-0.3.11-44-release.apk
+```
+
+L'installation avec `-r` remplace l'ancienne version sans supprimer les donnees locales de l'application.
+
 ## Tiber IPTV 0.3.10
 
 Version corrective UI pour les reglages TV.

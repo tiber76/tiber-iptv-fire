@@ -64,6 +64,13 @@ private enum class QualityState {
     NEUTRAL
 }
 
+private data class NextEpisodeEntry(
+    val url: String,
+    val fallbackUrl: String,
+    val title: String,
+    val itemKey: String
+)
+
 class PlayerActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private val progressTick = object : Runnable {
@@ -90,6 +97,7 @@ class PlayerActivity : Activity() {
     private lateinit var videoLayout: VLCVideoLayout
     private lateinit var topBar: LinearLayout
     private lateinit var bottomBar: LinearLayout
+    private lateinit var titleView: TextView
     private lateinit var statusView: TextView
     private lateinit var tamponStatusView: TextView
     private lateinit var timeView: TextView
@@ -98,13 +106,26 @@ class PlayerActivity : Activity() {
     private lateinit var backButton: Button
     private lateinit var playPauseButton: Button
     private lateinit var qualityButton: Button
+    private lateinit var preloadNextButton: Button
     private lateinit var displayModeButton: Button
     private lateinit var seekBar: SeekBar
+    private lateinit var nextEpisodeOverlay: LinearLayout
+    private lateinit var nextEpisodeCountdownView: TextView
+    private lateinit var nextEpisodePlayNowButton: Button
     private lateinit var stateStore: AppStateStore
     private val topControlButtons = mutableListOf<Button>()
+    private val bottomControlButtons = mutableListOf<Button>()
     private var itemKey: String? = null
+    private var currentTitle: String = ""
     private var streamUrl: String? = null
     private var fallbackStreamUrl: String? = null
+    private var nextEpisodeUrl: String = ""
+    private var nextEpisodeFallbackUrl: String = ""
+    private var nextEpisodeTitle: String = ""
+    private var nextEpisodeItemKey: String = ""
+    private val nextEpisodeQueue = mutableListOf<NextEpisodeEntry>()
+    private var seriesPreferenceKey: String = ""
+    private var trackPreferencesApplied = false
     private var resumeEnabled = false
     private var startFromBeginning = false
     private var preloadProxy = false
@@ -122,14 +143,37 @@ class PlayerActivity : Activity() {
     private var scrubStartTimeMs = 0L
     private var scrubTargetTimeMs = 0L
     private var scrubStartedAtMs = 0L
+    private var preloadAheadSession: PreloadStreamServer.Session? = null
+    private var preloadAheadThread: Thread? = null
+    private var playbackTimeOffsetMs = 0L
+    private var playbackCompleted = false
+    private var nextEpisodeCountdown = 0
+    private val nextEpisodeCountdownRunnable = object : Runnable {
+        override fun run() {
+            nextEpisodeCountdown -= 1
+            if (nextEpisodeCountdown <= 0) {
+                playNextEpisodeNow()
+                return
+            }
+            updateNextEpisodeCountdown()
+            main.postDelayed(this, 1_000L)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enterImmersiveMode()
         streamUrl = intent.getStringExtra(EXTRA_URL)
         fallbackStreamUrl = intent.getStringExtra(EXTRA_FALLBACK_URL)
-        val title = intent.getStringExtra(EXTRA_TITLE)
+        currentTitle = intent.getStringExtra(EXTRA_TITLE).orEmpty()
         itemKey = intent.getStringExtra(EXTRA_ITEM_KEY)
+        nextEpisodeUrl = intent.getStringExtra(EXTRA_NEXT_URL).orEmpty()
+        nextEpisodeFallbackUrl = intent.getStringExtra(EXTRA_NEXT_FALLBACK_URL).orEmpty()
+        nextEpisodeTitle = intent.getStringExtra(EXTRA_NEXT_TITLE).orEmpty()
+        nextEpisodeItemKey = intent.getStringExtra(EXTRA_NEXT_ITEM_KEY).orEmpty()
+        seriesPreferenceKey = intent.getStringExtra(EXTRA_SERIES_PREFERENCE_KEY).orEmpty()
+        loadNextEpisodeQueue()
+        promoteNextEpisodeFromQueue()
         resumeEnabled = intent.getBooleanExtra(EXTRA_RESUME_ENABLED, false)
         startFromBeginning = intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
         preloadProxy = intent.getBooleanExtra(EXTRA_PRELOAD_PROXY, false)
@@ -168,8 +212,8 @@ class PlayerActivity : Activity() {
             elevation = dp(10).toFloat()
         }
 
-        val titleView = TextView(this).apply {
-            text = title.orEmpty()
+        titleView = TextView(this).apply {
+            text = currentTitle
             setTextColor(Color.WHITE)
             textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
@@ -233,6 +277,12 @@ class PlayerActivity : Activity() {
         qualityButton = panelButton(qualityButtonText("Qualité")).apply {
             minWidth = dp(118)
         }
+        preloadNextButton = panelButton("⇥ Suite").apply {
+            minWidth = dp(112)
+            visibility = if (preloadProxy || !resumeEnabled) View.GONE else View.VISIBLE
+        }
+        bottomControlButtons.clear()
+        bottomControlButtons.addAll(listOf(preloadNextButton, qualityButton))
         tamponStatusView = TextView(this).apply {
             setTextColor(0xFFC9C6E4.toInt())
             textSize = 13f
@@ -284,6 +334,9 @@ class PlayerActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(statusView, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(preloadNextButton, LinearLayout.LayoutParams(dp(118), dp(42)).apply {
+                setMargins(dp(12), 0, 0, 0)
+            })
             addView(qualityButton, LinearLayout.LayoutParams(dp(132), dp(42)).apply {
                 setMargins(dp(12), 0, 0, 0)
             })
@@ -310,6 +363,36 @@ class PlayerActivity : Activity() {
             background = roundStroke(Color.argb(226, 12, 14, 28), dp(18), ACCENT_2, dp(2))
         }
         root.addView(seekOverlayView, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        nextEpisodeOverlay = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(dp(22), dp(18), dp(22), dp(18))
+            background = roundStroke(Color.argb(236, 12, 14, 28), dp(18), ACCENT_2, dp(2))
+        }
+        nextEpisodeCountdownView = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 20f
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        val nextEpisodeActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        nextEpisodePlayNowButton = panelButton("Lire maintenant").apply {
+            setOnClickListener { playNextEpisodeNow() }
+        }
+        nextEpisodeActions.addView(nextEpisodePlayNowButton, LinearLayout.LayoutParams(dp(170), dp(46)).apply { setMargins(0, dp(12), dp(10), 0) })
+        nextEpisodeActions.addView(panelButton("Annuler").apply {
+            setOnClickListener { cancelNextEpisodeCountdown(releaseGuard = true) }
+        }, LinearLayout.LayoutParams(dp(112), dp(46)).apply { setMargins(0, dp(12), 0, 0) })
+        nextEpisodeOverlay.addView(nextEpisodeCountdownView)
+        nextEpisodeOverlay.addView(nextEpisodeActions)
+        root.addView(
+            nextEpisodeOverlay,
+            FrameLayout.LayoutParams(dp(430), -2, Gravity.CENTER_VERTICAL or Gravity.END).apply {
+                setMargins(0, dp(24), dp(32), dp(24))
+            }
+        )
         setContentView(root)
 
         playPauseButton.setOnClickListener { togglePlayPause() }
@@ -318,6 +401,7 @@ class PlayerActivity : Activity() {
         displayModeButton.setOnClickListener { showDisplayModeDialog() }
         info.setOnClickListener { showInfoDialog() }
         qualityButton.setOnClickListener { showQualityPanel() }
+        preloadNextButton.setOnClickListener { startAheadPreloadFromCurrentPosition() }
         beginning.setOnClickListener { playFromBeginning() }
         backButton.setOnClickListener { finish() }
 
@@ -340,6 +424,15 @@ class PlayerActivity : Activity() {
             }
         }
         if (event.action == KeyEvent.ACTION_DOWN) {
+            if (isDpadSeekKey(event.keyCode) && !controlsVisible) {
+                setControlsVisible(true)
+                topControlsActive = false
+                seekBar.requestFocus()
+                handleDpadSeek(if (event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1, event)
+                main.removeCallbacks(hideControlsRunnable)
+                main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
+                return true
+            }
             when (event.keyCode) {
                 KeyEvent.KEYCODE_VOLUME_UP -> return adjustMediaVolume(AudioManager.ADJUST_RAISE)
                 KeyEvent.KEYCODE_VOLUME_DOWN -> return adjustMediaVolume(AudioManager.ADJUST_LOWER)
@@ -375,19 +468,25 @@ class PlayerActivity : Activity() {
                 }
                 KeyEvent.KEYCODE_DPAD_UP -> {
                     setControlsVisible(true)
-                    topControlsActive = true
                     cancelPendingScrub()
                     main.removeCallbacks(hideControlsRunnable)
-                    topControlButtons.firstOrNull()?.requestFocus()
+                    when {
+                        currentFocus === seekBar -> focusAdjacentBottomButton(0)
+                        isNavigatingBottomControls() -> focusFirstTopButton()
+                        else -> focusFirstTopButton()
+                    }
                     main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
                     setControlsVisible(true)
-                    topControlsActive = false
                     cancelPendingScrub()
                     main.removeCallbacks(hideControlsRunnable)
-                    seekBar.requestFocus()
+                    when {
+                        isNavigatingTopControls() -> focusAdjacentBottomButton(0)
+                        isNavigatingBottomControls() -> focusSeekBar()
+                        else -> focusSeekBar()
+                    }
                     main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
                     return true
                 }
@@ -396,12 +495,20 @@ class PlayerActivity : Activity() {
                         focusAdjacentTopButton(1)
                         return true
                     }
+                    if (isNavigatingBottomControls()) {
+                        focusAdjacentBottomButton(1)
+                        return true
+                    }
                     handleDpadSeek(1, event)
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_LEFT -> {
                     if (isNavigatingTopControls()) {
                         focusAdjacentTopButton(-1)
+                        return true
+                    }
+                    if (isNavigatingBottomControls()) {
+                        focusAdjacentBottomButton(-1)
                         return true
                     }
                     handleDpadSeek(-1, event)
@@ -450,6 +557,7 @@ class PlayerActivity : Activity() {
         super.onStop()
         main.removeCallbacks(hideControlsRunnable)
         main.removeCallbacks(hideSeekOverlayRunnable)
+        main.removeCallbacks(nextEpisodeCountdownRunnable)
         releasePlayer()
         releaseBufferedPlayback()
         releaseRemoteGuard()
@@ -458,6 +566,7 @@ class PlayerActivity : Activity() {
     override fun onDestroy() {
         main.removeCallbacks(hideControlsRunnable)
         main.removeCallbacks(hideSeekOverlayRunnable)
+        main.removeCallbacks(nextEpisodeCountdownRunnable)
         releasePlayer()
         releaseBufferedPlayback()
         releaseRemoteGuard()
@@ -465,8 +574,13 @@ class PlayerActivity : Activity() {
     }
 
     private fun releaseBufferedPlayback() {
+        preloadAheadSession?.stop()
+        preloadAheadSession = null
+        preloadAheadThread?.interrupt()
+        preloadAheadThread = null
         if (preloadProxy || remoteGuardLabel == RemoteLabels.BUFFER) {
             PreloadStreamServer.stop()
+            PreloadStreamServer.cleanupCache(this)
         }
     }
 
@@ -487,22 +601,17 @@ class PlayerActivity : Activity() {
 
     private fun startPlayback() {
         releasePlayer()
+        playbackCompleted = false
         statusView.text = "Chargement VLC..."
         updateQualitySummary("Connexion", QualityState.NEUTRAL)
         timeView.text = ""
         playbackStarted = false
         lastBufferingPercent = 0f
         lastPlaybackIssue = ""
+        trackPreferencesApplied = false
         val bufferMs = stateStore.playerBufferMs()
 
-        val options = arrayListOf(
-            "--network-caching=$bufferMs",
-            "--clock-jitter=0",
-            "--audio-time-stretch",
-            "--avcodec-fast",
-            "--drop-late-frames",
-            "--skip-frames"
-        )
+        val options = PlaybackPolicy.libVlcOptions(bufferMs)
         val createdLib = LibVLC(this, options)
         libVlc = createdLib
         val createdPlayer = MediaPlayer(createdLib)
@@ -514,21 +623,21 @@ class PlayerActivity : Activity() {
 
         val media = Media(createdLib, Uri.parse(streamUrl))
         media.setHWDecoderEnabled(true, false)
-        media.addOption(":network-caching=$bufferMs")
-        if (preloadProxy) {
-            media.addOption(":file-caching=$bufferMs")
-            media.addOption(":no-input-fast-seek")
+        PlaybackPolicy.mediaOptions(bufferMs, bufferedPlayback = preloadProxy).forEach { option ->
+            media.addOption(option)
         }
-        media.addOption(":http-reconnect")
-        media.addOption(":no-sub-autodetect-file")
         createdPlayer.media = media
         media.release()
         createdPlayer.play()
 
-        if (startFromBeginning && resumeEnabled) {
+        if (startFromBeginning && resumeEnabled && playbackTimeOffsetMs == 0L) {
             stateStore.saveResume(itemKey, 0L)
         }
-        val resumePosition = if (resumeEnabled && !startFromBeginning) stateStore.resumePosition(itemKey) else 0L
+        val resumePosition = if (resumeEnabled && !startFromBeginning && playbackTimeOffsetMs == 0L) {
+            stateStore.resumePosition(itemKey)
+        } else {
+            0L
+        }
         startFromBeginning = false
         if (resumePosition > 10_000L) {
             main.postDelayed({
@@ -564,12 +673,148 @@ class PlayerActivity : Activity() {
 
     private fun qualityButtonText(label: String): String = "◇ $label"
 
+    private fun loadNextEpisodeQueue() {
+        val urls = intent.getStringArrayListExtra(EXTRA_NEXT_URLS).orEmpty()
+        val fallbackUrls = intent.getStringArrayListExtra(EXTRA_NEXT_FALLBACK_URLS).orEmpty()
+        val titles = intent.getStringArrayListExtra(EXTRA_NEXT_TITLES).orEmpty()
+        val itemKeys = intent.getStringArrayListExtra(EXTRA_NEXT_ITEM_KEYS).orEmpty()
+        val count = min(min(urls.size, titles.size), itemKeys.size)
+        nextEpisodeQueue.clear()
+        for (index in 0 until count) {
+            val url = urls[index]
+            val title = titles[index]
+            if (url.isBlank() || title.isBlank()) {
+                continue
+            }
+            nextEpisodeQueue += NextEpisodeEntry(
+                url = url,
+                fallbackUrl = fallbackUrls.getOrNull(index).orEmpty(),
+                title = title,
+                itemKey = itemKeys[index]
+            )
+        }
+    }
+
+    private fun promoteNextEpisodeFromQueue(): Boolean {
+        if (nextEpisodeQueue.isEmpty()) {
+            return false
+        }
+        val next = nextEpisodeQueue.removeAt(0)
+        nextEpisodeUrl = next.url
+        nextEpisodeFallbackUrl = next.fallbackUrl
+        nextEpisodeTitle = next.title
+        nextEpisodeItemKey = next.itemKey
+        return true
+    }
+
+    private fun clearNextEpisode() {
+        nextEpisodeUrl = ""
+        nextEpisodeFallbackUrl = ""
+        nextEpisodeTitle = ""
+        nextEpisodeItemKey = ""
+    }
+
+    private fun startNextEpisodeCountdown(): Boolean {
+        if (nextEpisodeUrl.isBlank() || nextEpisodeTitle.isBlank()) {
+            return false
+        }
+        nextEpisodeCountdown = NEXT_EPISODE_COUNTDOWN_SECONDS
+        updateNextEpisodeCountdown()
+        nextEpisodeOverlay.visibility = View.VISIBLE
+        nextEpisodeOverlay.alpha = 1f
+        setControlsVisible(true)
+        nextEpisodePlayNowButton.requestFocus()
+        main.removeCallbacks(nextEpisodeCountdownRunnable)
+        main.postDelayed(nextEpisodeCountdownRunnable, 1_000L)
+        return true
+    }
+
+    private fun updateNextEpisodeCountdown() {
+        if (!::nextEpisodeCountdownView.isInitialized) {
+            return
+        }
+        nextEpisodeCountdownView.text = "Episode suivant dans ${nextEpisodeCountdown}s\n$nextEpisodeTitle"
+    }
+
+    private fun cancelNextEpisodeCountdown(releaseGuard: Boolean) {
+        main.removeCallbacks(nextEpisodeCountdownRunnable)
+        nextEpisodeCountdown = 0
+        if (::nextEpisodeOverlay.isInitialized) {
+            nextEpisodeOverlay.visibility = View.GONE
+        }
+        if (releaseGuard) {
+            releaseBufferedPlayback()
+            releaseRemoteGuard()
+        }
+    }
+
+    private fun playNextEpisodeNow() {
+        if (nextEpisodeUrl.isBlank()) {
+            cancelNextEpisodeCountdown(releaseGuard = true)
+            return
+        }
+        val url = nextEpisodeUrl
+        val fallback = nextEpisodeFallbackUrl
+        val title = nextEpisodeTitle
+        val nextKey = nextEpisodeItemKey
+        cancelNextEpisodeCountdown(releaseGuard = false)
+        releaseBufferedPlayback()
+        if (!prepareGuardForNextEpisode(url)) {
+            releaseRemoteGuard()
+            Toast.makeText(this, UserFacingMessages.remoteBusy("Lecture"), Toast.LENGTH_LONG).show()
+            return
+        }
+        streamUrl = url
+        fallbackStreamUrl = fallback
+        currentTitle = title
+        itemKey = nextKey.ifBlank { null }
+        startFromBeginning = true
+        preloadProxy = false
+        playbackTimeOffsetMs = 0L
+        usedFallback = false
+        titleView.text = currentTitle
+        if (!promoteNextEpisodeFromQueue()) {
+            clearNextEpisode()
+        }
+        startPlayback()
+    }
+
+    private fun prepareGuardForNextEpisode(url: String): Boolean {
+        if (!isRemotePlaybackUrl(url)) {
+            releaseRemoteGuard()
+            return true
+        }
+        if (remoteGuardLabel == RemoteLabels.PLAYBACK &&
+            RemoteActionGuard.activeLabel() == RemoteLabels.PLAYBACK
+        ) {
+            return true
+        }
+        releaseRemoteGuard()
+        if (!RemoteActionGuard.tryAcquire(RemoteLabels.PLAYBACK)) {
+            return false
+        }
+        remoteGuardLabel = RemoteLabels.PLAYBACK
+        return true
+    }
+
+    private fun markPlaybackComplete() {
+        if (!resumeEnabled) {
+            return
+        }
+        val length = player?.length ?: 0L
+        if (length > 0L) {
+            playbackCompleted = true
+            stateStore.saveResume(itemKey, length, length)
+        }
+    }
+
     private fun handlePlayerEvent(event: MediaPlayer.Event) {
         main.post {
             player ?: return@post
             when (event.type) {
                 MediaPlayer.Event.Playing -> {
                     playbackStarted = true
+                    applyTrackPreferences()
                     ensureAudioTrack()
                     applyDisplayMode(false)
                     statusView.text = playbackStatus()
@@ -597,7 +842,11 @@ class PlayerActivity : Activity() {
                     statusView.text = "Lecture terminee"
                     updateQualitySummary("Terminé", QualityState.NEUTRAL)
                     playPauseButton.text = playPauseButtonText(playing = false)
+                    markPlaybackComplete()
                     setControlsVisible(true)
+                    if (startNextEpisodeCountdown()) {
+                        return@post
+                    }
                     releaseBufferedPlayback()
                     releaseRemoteGuard()
                 }
@@ -619,6 +868,7 @@ class PlayerActivity : Activity() {
                 MediaPlayer.Event.ESAdded,
                 MediaPlayer.Event.ESDeleted,
                 MediaPlayer.Event.ESSelected -> {
+                    applyTrackPreferences()
                     ensureAudioTrack()
                     statusView.text = playbackStatus()
                     updateQualitySummary(compactQualityText(), QualityState.GOOD)
@@ -686,6 +936,31 @@ class PlayerActivity : Activity() {
         }
     }
 
+    private fun applyTrackPreferences() {
+        if (trackPreferencesApplied || seriesPreferenceKey.isBlank()) {
+            return
+        }
+        val currentPlayer = player ?: return
+        val audioApplied = applyTrackPreference(currentPlayer, audio = true)
+        val subtitlesApplied = applyTrackPreference(currentPlayer, audio = false)
+        trackPreferencesApplied = audioApplied || subtitlesApplied
+    }
+
+    private fun applyTrackPreference(currentPlayer: MediaPlayer, audio: Boolean): Boolean {
+        val preference = stateStore.playerTrackPreference(seriesPreferenceKey, audio)
+        if (preference.isBlank()) {
+            return false
+        }
+        val tracks = if (audio) currentPlayer.audioTracks else currentPlayer.spuTracks
+        val track = tracks?.firstOrNull { candidate -> trackPreferenceValue(candidate) == preference }
+            ?: return false
+        return if (audio) {
+            currentPlayer.setAudioTrack(track.id)
+        } else {
+            currentPlayer.setSpuTrack(track.id)
+        }
+    }
+
     private fun togglePlayPause() {
         val currentPlayer = player ?: return
         if (currentPlayer.isPlaying) {
@@ -718,9 +993,49 @@ class PlayerActivity : Activity() {
             label = { choice -> trackChoiceLabel(choice, audio) },
             onSelect = { choice ->
                 val ok = if (audio) currentPlayer.setAudioTrack(choice.id) else currentPlayer.setSpuTrack(choice.id)
+                if (ok) {
+                    stateStore.setPlayerTrackPreference(seriesPreferenceKey, audio, trackPreferenceValue(choice))
+                    if (audio) {
+                        forceAudioTrackRefresh(choice.id)
+                    }
+                }
                 statusView.text = if (ok) playbackStatus() else "Sélection impossible"
             }
         )
+    }
+
+    private fun forceAudioTrackRefresh(trackId: Int) {
+        val selectedPlayer = player ?: return
+        selectedPlayer.setVolume(100)
+        val selectedTime = selectedPlayer.time
+        main.postDelayed({
+            val currentPlayer = player ?: return@postDelayed
+            if (currentPlayer !== selectedPlayer) {
+                return@postDelayed
+            }
+            if (currentPlayer.audioTrack != trackId) {
+                currentPlayer.setAudioTrack(trackId)
+            }
+            currentPlayer.setVolume(100)
+            val length = currentPlayer.length
+            val time = currentPlayer.time.takeIf { value -> value > 0L } ?: selectedTime
+            if (length > 0L && time > 0L && canSeekToTime(time, length)) {
+                val refreshTarget = when {
+                    time + AUDIO_TRACK_REFRESH_SEEK_MS < length -> time + AUDIO_TRACK_REFRESH_SEEK_MS
+                    time > AUDIO_TRACK_REFRESH_SEEK_MS -> time - AUDIO_TRACK_REFRESH_SEEK_MS
+                    else -> time
+                }
+                currentPlayer.time = refreshTarget
+            } else if (currentPlayer.isPlaying) {
+                currentPlayer.pause()
+                main.postDelayed({
+                    if (player === currentPlayer) {
+                        currentPlayer.play()
+                    }
+                }, 90L)
+            }
+            statusView.text = playbackStatus()
+        }, 140L)
     }
 
     private fun showDisplayModeDialog() {
@@ -798,6 +1113,15 @@ class PlayerActivity : Activity() {
             else -> raw
         }
         return clean.replace(" - [", " · ").replace("]", "")
+    }
+
+    private fun trackPreferenceValue(track: MediaPlayer.TrackDescription): String {
+        val name = track.name?.trim().orEmpty()
+        return if (name.isBlank()) {
+            "id:${track.id}"
+        } else {
+            "name:$name"
+        }
     }
 
     private fun showInfoDialog() {
@@ -1065,6 +1389,94 @@ class PlayerActivity : Activity() {
         }
     }
 
+    private fun startAheadPreloadFromCurrentPosition() {
+        val currentPlayer = player ?: return
+        val length = currentPlayer.length
+        val time = currentPlayer.time
+        val url = streamUrl.orEmpty()
+        if (preloadProxy || !resumeEnabled || length <= 0L || url.isBlank() || !isRemotePlaybackUrl(url)) {
+            Toast.makeText(this, "Préchargement suite indisponible sur ce flux.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (preloadAheadThread?.isAlive == true || preloadAheadSession?.isActive() == true) {
+            Toast.makeText(this, "Préchargement suite déjà en cours.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val targetBytes = stateStore.networkProfile().preloadAheadBytes
+        preloadNextButton.isEnabled = false
+        preloadNextButton.text = "⇥ ..."
+        statusView.text = "Bascule vers tampon local depuis ${formatTime(time)}"
+        releasePlayer()
+        releaseRemoteGuard()
+        if (!RemoteActionGuard.tryAcquire(RemoteLabels.BUFFER)) {
+            preloadNextButton.isEnabled = true
+            preloadNextButton.text = "⇥ Suite"
+            Toast.makeText(this, UserFacingMessages.remoteBusy("Préchargement"), Toast.LENGTH_LONG).show()
+            return
+        }
+        remoteGuardLabel = RemoteLabels.BUFFER
+        preloadAheadThread = Thread({
+            runAheadPreload(url, time, length, targetBytes)
+        }, "tiber-suite-preload").apply { start() }
+    }
+
+    private fun runAheadPreload(url: String, timeMs: Long, lengthMs: Long, targetBytes: Long) {
+        try {
+            val totalBytes = remoteContentLength(url)
+            val startBytes = if (totalBytes > 0L) {
+                max(0L, min(totalBytes - 1L, timeMs * totalBytes / lengthMs))
+            } else {
+                0L
+            }
+            val session = PreloadStreamServer.startFromPlayback(this, url, targetBytes, startBytes)
+            preloadAheadSession = session
+            val readyBytes = min(PLAYER_AHEAD_PRELOAD_READY_BYTES, targetBytes)
+            val ready = session.waitForBuffered(readyBytes, PLAYER_AHEAD_PRELOAD_TIMEOUT_MS)
+            if (!ready && session.downloadedBytes() <= 0L) {
+                throw IllegalStateException("tampon indisponible")
+            }
+            main.post {
+                playbackTimeOffsetMs = timeMs
+                preloadProxy = true
+                streamUrl = session.localUrl()
+                startFromBeginning = totalBytes > 0L
+                startPlayback()
+                preloadNextButton.isEnabled = true
+                preloadNextButton.visibility = View.GONE
+                statusView.text = if (totalBytes > 0L) {
+                    "Lecture via tampon local depuis ${formatTime(timeMs)}"
+                } else {
+                    "Lecture via tampon local, reprise à ${formatTime(timeMs)}"
+                }
+                updateTamponStatus()
+            }
+        } catch (exception: Exception) {
+            preloadAheadSession?.stop()
+            preloadAheadSession = null
+            RemoteActionGuard.release(RemoteLabels.BUFFER)
+            remoteGuardLabel = ""
+            main.post {
+                preloadNextButton.isEnabled = true
+                preloadNextButton.text = "⇥ Suite"
+                Toast.makeText(this, "Préchargement suite impossible: ${exception.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun remoteContentLength(url: String): Long {
+        val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        return try {
+            connection.requestMethod = "HEAD"
+            connection.connectTimeout = 12_000
+            connection.readTimeout = 12_000
+            connection.setRequestProperty("User-Agent", StreamNetwork.USER_AGENT)
+            val code = connection.responseCode
+            if (code in 200..299) connection.contentLengthLong else -1L
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     private fun updateProgress() {
         val currentPlayer = player ?: return
         if (userSeeking) {
@@ -1177,7 +1589,11 @@ class PlayerActivity : Activity() {
     private fun updateTimeLabel(progress: Int) {
         val currentPlayer = player ?: return
         val length = currentPlayer.length
-        val time = if (length > 0L) (length * (progress / 1000f)).roundToInt().toLong() else currentPlayer.time
+        val time = if (length > 0L) {
+            (length * (progress / 1000f)).roundToInt().toLong() + playbackTimeOffsetMs
+        } else {
+            currentPlayer.time + playbackTimeOffsetMs
+        }
         timeView.text = when {
             length > 0L -> "${formatTime(time)} / ${formatTime(length)}"
             time > 0L -> formatTime(time)
@@ -1189,8 +1605,8 @@ class PlayerActivity : Activity() {
         main.removeCallbacks(progressTick)
         val currentPlayer = player
         if (currentPlayer != null) {
-            if (resumeEnabled) {
-                stateStore.saveResume(itemKey, currentPlayer.time, currentPlayer.length)
+            if (resumeEnabled && !playbackCompleted) {
+                stateStore.saveResume(itemKey, currentPlayer.time + playbackTimeOffsetMs, currentPlayer.length)
             }
             currentPlayer.setEventListener(null)
             currentPlayer.stop()
@@ -1212,8 +1628,13 @@ class PlayerActivity : Activity() {
         if (preloadProxy && !PreloadStreamServer.isComplete()) {
             "OK pause/lecture • ↑ boutons • ↓ barre • seek après préchargement complet"
         } else {
-            "OK pause/lecture • ↑ boutons • ↓ barre • ← -15s / → +30s • maintenir pour avancer • Retour masque"
+            "OK pause/lecture • ↑ actions • ↓ barre • ← -15s / → +30s • maintenir pour avancer • Retour masque"
         }
+
+    private fun focusFirstTopButton() {
+        topControlsActive = true
+        topControlButtons.firstOrNull()?.requestFocus()
+    }
 
     private fun compactQualityText(): String {
         val track = player?.currentVideoTrack
@@ -1242,8 +1663,38 @@ class PlayerActivity : Activity() {
         main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
     }
 
+    private fun focusAdjacentBottomButton(direction: Int) {
+        val buttons = visibleBottomButtons()
+        if (buttons.isEmpty()) {
+            focusSeekBar()
+            return
+        }
+        topControlsActive = false
+        val currentIndex = buttons.indexOf(currentFocus)
+        val nextIndex = when {
+            currentIndex < 0 -> 0
+            else -> (currentIndex + direction).coerceIn(0, buttons.lastIndex)
+        }
+        buttons[nextIndex].requestFocus()
+        main.removeCallbacks(hideControlsRunnable)
+        main.postDelayed(hideControlsRunnable, PlaybackPolicy.CONTROLS_HIDE_DELAY_MS)
+    }
+
+    private fun visibleBottomButtons(): List<Button> =
+        bottomControlButtons.filter { button ->
+            button.visibility == View.VISIBLE && button.isEnabled
+        }
+
+    private fun focusSeekBar() {
+        topControlsActive = false
+        seekBar.requestFocus()
+    }
+
     private fun isNavigatingTopControls(): Boolean =
         controlsVisible && (topControlsActive || topControlButtons.contains(currentFocus))
+
+    private fun isNavigatingBottomControls(): Boolean =
+        controlsVisible && visibleBottomButtons().contains(currentFocus)
 
     private fun cancelPendingScrub() {
         if (!scrubActive) {
@@ -1498,6 +1949,15 @@ class PlayerActivity : Activity() {
         const val EXTRA_START_FROM_BEGINNING = "start_from_beginning"
         const val EXTRA_PRELOAD_PROXY = "preload_proxy"
         const val EXTRA_REMOTE_GUARD_LABEL = "remote_guard_label"
+        const val EXTRA_SERIES_PREFERENCE_KEY = "series_preference_key"
+        const val EXTRA_NEXT_URL = "next_episode_url"
+        const val EXTRA_NEXT_FALLBACK_URL = "next_episode_fallback_url"
+        const val EXTRA_NEXT_TITLE = "next_episode_title"
+        const val EXTRA_NEXT_ITEM_KEY = "next_episode_item_key"
+        const val EXTRA_NEXT_URLS = "next_episode_urls"
+        const val EXTRA_NEXT_FALLBACK_URLS = "next_episode_fallback_urls"
+        const val EXTRA_NEXT_TITLES = "next_episode_titles"
+        const val EXTRA_NEXT_ITEM_KEYS = "next_episode_item_keys"
 
         private val PANEL = Color.rgb(18, 20, 36)
         private val PANEL_FOCUS = Color.rgb(43, 40, 79)
@@ -1507,5 +1967,9 @@ class PlayerActivity : Activity() {
         private val ERROR_ACCENT = Color.rgb(255, 138, 154)
         private val ERROR_TEXT = Color.rgb(255, 197, 205)
         private val STROKE = Color.rgb(51, 54, 86)
+        private const val PLAYER_AHEAD_PRELOAD_TIMEOUT_MS = 45_000L
+        private const val PLAYER_AHEAD_PRELOAD_READY_BYTES = 16L * 1024L * 1024L
+        private const val NEXT_EPISODE_COUNTDOWN_SECONDS = 10
+        private const val AUDIO_TRACK_REFRESH_SEEK_MS = 250L
     }
 }

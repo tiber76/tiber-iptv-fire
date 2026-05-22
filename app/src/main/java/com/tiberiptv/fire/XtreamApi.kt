@@ -5,15 +5,11 @@ import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
-import java.io.BufferedReader
 import java.io.IOException
-import java.io.InputStream
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 import kotlin.math.max
+import okhttp3.Request
 
 class XtreamApi(private val credentials: XtreamModels.Credentials) {
     @Throws(IOException::class, JSONException::class)
@@ -70,7 +66,17 @@ class XtreamApi(private val credentials: XtreamModels.Credentials) {
     @Throws(IOException::class, JSONException::class)
     fun getSeriesInfo(seriesId: String): XtreamModels.SeriesInfo {
         val payload = requestObject(apiUriWithParam("get_series_info", "series_id", seriesId))
-        val detail = parseDetail(payload.optJSONObject("info"))
+        val seriesInfo = payload.optJSONObject("info")
+        val detail = parseDetail(seriesInfo, ::normalizeImageUrl)
+        val seriesImage = imageFrom(
+            seriesInfo?.optString("movie_image", "").orEmpty(),
+            seriesInfo?.optString("cover_big", "").orEmpty(),
+            seriesInfo?.optString("cover", "").orEmpty(),
+            seriesInfo?.optString("stream_icon", "").orEmpty(),
+            seriesInfo?.optString("image", "").orEmpty(),
+            seriesInfo?.optString("poster", "").orEmpty(),
+            seriesInfo?.optString("thumbnail", "").orEmpty()
+        )
         val episodes = payload.optJSONObject("episodes")
             ?: return XtreamModels.SeriesInfo(detail, emptyList())
         val seasonNames = episodes.names()
@@ -84,7 +90,23 @@ class XtreamApi(private val credentials: XtreamModels.Credentials) {
             for (j in 0 until seasonEpisodes.length()) {
                 val episode = seasonEpisodes.optJSONObject(j) ?: continue
                 val info = episode.optJSONObject("info")
-                val image = info?.optString("movie_image", "") ?: ""
+                val image = imageFrom(
+                    info?.optString("movie_image", "").orEmpty(),
+                    info?.optString("cover_big", "").orEmpty(),
+                    info?.optString("cover", "").orEmpty(),
+                    info?.optString("stream_icon", "").orEmpty(),
+                    info?.optString("image", "").orEmpty(),
+                    info?.optString("thumbnail", "").orEmpty(),
+                    info?.optString("still_path", "").orEmpty(),
+                    episode.optString("movie_image", ""),
+                    episode.optString("cover_big", ""),
+                    episode.optString("cover", ""),
+                    episode.optString("stream_icon", ""),
+                    episode.optString("image", ""),
+                    episode.optString("thumbnail", ""),
+                    episode.optString("still_path", ""),
+                    seriesImage
+                )
                 val title = episode.optString("title", "Episode ${j + 1}")
                 val id = episode.optString("id", "")
                 val extension = episode.optString("container_extension", "mp4")
@@ -116,7 +138,7 @@ class XtreamApi(private val credentials: XtreamModels.Credentials) {
     @Throws(IOException::class, JSONException::class)
     fun getMovieDetail(movieId: String): XtreamModels.ItemDetail {
         val payload = requestObject(apiUriWithParam("get_vod_info", "vod_id", movieId))
-        return parseDetail(payload.optJSONObject("info"))
+        return parseDetail(payload.optJSONObject("info"), ::normalizeImageUrl)
     }
 
     @Throws(IOException::class, JSONException::class)
@@ -163,6 +185,52 @@ class XtreamApi(private val credentials: XtreamModels.Credentials) {
             "." + cleanExtension(extension)
     }
 
+    private fun imageFrom(vararg values: String): String {
+        for (value in values) {
+            val image = normalizeImageUrl(value)
+            if (image.isNotEmpty()) {
+                return image
+            }
+        }
+        return ""
+    }
+
+    private fun normalizeImageUrl(value: String): String {
+        val trimmed = value.trim()
+        val lower = trimmed.lowercase(Locale.US)
+        if (trimmed.isEmpty() ||
+            lower == "null" ||
+            lower == "n/a" ||
+            lower == "na" ||
+            lower == "none" ||
+            lower == "[]" ||
+            lower == "{}" ||
+            lower == "coming_soon"
+        ) {
+            return ""
+        }
+        if (trimmed.startsWith("//") ||
+            trimmed.startsWith("http://", ignoreCase = true) ||
+            trimmed.startsWith("https://", ignoreCase = true)
+        ) {
+            return trimmed
+        }
+        return if (trimmed.startsWith("/")) {
+            credentials.serverUrl.trimEnd('/') + trimmed
+        } else if (trimmed.contains("/") || looksLikeImageFile(lower)) {
+            credentials.serverUrl.trimEnd('/') + "/" + trimmed.trimStart('/')
+        } else {
+            ""
+        }
+    }
+
+    private fun looksLikeImageFile(value: String): Boolean =
+        value.endsWith(".jpg") ||
+            value.endsWith(".jpeg") ||
+            value.endsWith(".png") ||
+            value.endsWith(".webp") ||
+            value.endsWith(".gif")
+
     private fun apiUri(action: String?, categoryId: String?): Uri {
         val builder = Uri.parse("${credentials.serverUrl}/player_api.php")
             .buildUpon()
@@ -192,21 +260,17 @@ class XtreamApi(private val credentials: XtreamModels.Credentials) {
     @Throws(IOException::class)
     private fun request(uri: Uri): String {
         requireApiSlot()
-        val connection = URL(uri.toString()).openConnection() as HttpURLConnection
-        return try {
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 25_000
-            connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "TiberIPTV-Fire/0.1")
-            val code = connection.responseCode
-            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-            val body = readAll(stream)
-            if (code !in 200..299) {
-                throw IOException("HTTP $code: $body")
+        val request = Request.Builder()
+            .url(uri.toString())
+            .header("Accept", "application/json")
+            .header("User-Agent", TiberNetwork.USER_AGENT)
+            .build()
+        TiberNetwork.appClient().newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("HTTP ${response.code}: $body")
             }
-            body
-        } finally {
-            connection.disconnect()
+            return body
         }
     }
 
@@ -299,7 +363,10 @@ class XtreamApi(private val credentials: XtreamModels.Credentials) {
                 value == "soon")
         }
 
-        private fun parseDetail(info: JSONObject?): XtreamModels.ItemDetail {
+        private fun parseDetail(
+            info: JSONObject?,
+            normalizeAsset: (String) -> String = { value -> value.trim() }
+        ): XtreamModels.ItemDetail {
             if (info == null) {
                 return XtreamModels.ItemDetail("", "", "", "", "", "", "", "", "")
             }
@@ -325,8 +392,55 @@ class XtreamApi(private val credentials: XtreamModels.Credentials) {
                     info.optString("trailer", ""),
                     info.optString("movie_trailer", ""),
                     info.optString("youtube", "")
+                ),
+                assetFrom(
+                    info,
+                    normalizeAsset,
+                    "backdrop_path",
+                    "backdrop",
+                    "backdrop_url",
+                    "fanart",
+                    "background",
+                    "background_image"
                 )
             )
+        }
+
+        private fun assetFrom(
+            info: JSONObject,
+            normalizeAsset: (String) -> String,
+            vararg keys: String
+        ): String {
+            for (key in keys) {
+                val value = info.opt(key) ?: continue
+                when (value) {
+                    is JSONArray -> {
+                        for (i in 0 until value.length()) {
+                            val image = normalizeAsset(value.optString(i, ""))
+                            if (image.isNotEmpty()) {
+                                return image
+                            }
+                        }
+                    }
+                    is String -> {
+                        if (value.trim().startsWith("[")) {
+                            runCatching { JSONArray(value) }.getOrNull()?.let { array ->
+                                for (i in 0 until array.length()) {
+                                    val arrayImage = normalizeAsset(array.optString(i, ""))
+                                    if (arrayImage.isNotEmpty()) {
+                                        return arrayImage
+                                    }
+                                }
+                            }
+                        }
+                        val image = normalizeAsset(value)
+                        if (image.isNotEmpty()) {
+                            return image
+                        }
+                    }
+                }
+            }
+            return ""
         }
 
         private fun firstNonEmpty(vararg values: String?): String =
@@ -356,21 +470,6 @@ class XtreamApi(private val credentials: XtreamModels.Credentials) {
             } catch (_: IllegalArgumentException) {
                 value
             }
-        }
-
-        @Throws(IOException::class)
-        private fun readAll(stream: InputStream?): String {
-            if (stream == null) {
-                return ""
-            }
-            val builder = StringBuilder()
-            BufferedReader(InputStreamReader(stream, StandardCharsets.UTF_8)).use { reader ->
-                while (true) {
-                    val line = reader.readLine() ?: break
-                    builder.append(line)
-                }
-            }
-            return builder.toString()
         }
     }
 }

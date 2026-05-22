@@ -5,7 +5,6 @@ import android.os.Bundle
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.ImageView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -56,8 +55,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -67,11 +65,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -98,13 +96,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
+import coil.size.Precision
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -132,6 +137,9 @@ class MainActivity : ComponentActivity() {
                     onToggleFilterHighRating = viewModel::toggleFilterHighRating,
                     onToggleFilterRecentYear = viewModel::toggleFilterRecentYear,
                     onClearCatalogFilters = viewModel::clearCatalogFilters,
+                    onTogglePinnedCategory = viewModel::togglePinnedCategory,
+                    onToggleHiddenCategory = viewModel::toggleHiddenCategory,
+                    onToggleCustomGroupCategory = viewModel::toggleCustomGroupCategory,
                     onCatalogSort = viewModel::setCatalogSort,
                     onOpenItem = viewModel::openItem,
                     onBackToCatalog = viewModel::closeDetail,
@@ -148,6 +156,9 @@ class MainActivity : ComponentActivity() {
                     onClearImageCache = viewModel::clearImageCache,
                     onClearPreloadCache = viewModel::clearPreloadCache,
                     onClearCatalogCache = viewModel::clearCatalogCache,
+                    onClearCategoryPreferences = viewModel::clearCategoryPreferences,
+                    onPrepareCache = viewModel::enqueueBackgroundCatalogSync,
+                    onRunServerDiagnostic = viewModel::runServerDiagnostic,
                     onHome = { finish() },
                     onSettings = viewModel::openSettings,
                     onCloseSettings = { viewModel.loadMode(Mode.MOVIES, false) },
@@ -194,6 +205,8 @@ class MainActivity : ComponentActivity() {
     private fun playItem(viewModel: MainViewModel, item: XtreamModels.StreamItem, startFromBeginning: Boolean) {
         PosterLoader.pauseRemoteLoading()
         val request = viewModel.playbackRequest(item) ?: return
+        val nextEpisodes = viewModel.nextEpisodePlaybackQueue(item)
+        val nextEpisode = nextEpisodes.firstOrNull()
         startActivity(
             Intent(this, PlayerActivity::class.java)
                 .putExtra(PlayerActivity.EXTRA_URL, request.url)
@@ -204,8 +217,24 @@ class MainActivity : ComponentActivity() {
                 .putExtra(PlayerActivity.EXTRA_START_FROM_BEGINNING, startFromBeginning || request.bufferedPlayback)
                 .putExtra(PlayerActivity.EXTRA_PRELOAD_PROXY, request.bufferedPlayback)
                 .putExtra(PlayerActivity.EXTRA_REMOTE_GUARD_LABEL, request.remoteGuardLabel)
+                .putExtra(PlayerActivity.EXTRA_SERIES_PREFERENCE_KEY, stateSeriesPreferenceKey(viewModel, item))
+                .putExtra(PlayerActivity.EXTRA_NEXT_URL, nextEpisode?.url.orEmpty())
+                .putExtra(PlayerActivity.EXTRA_NEXT_FALLBACK_URL, nextEpisode?.fallbackUrl.orEmpty())
+                .putExtra(PlayerActivity.EXTRA_NEXT_TITLE, nextEpisode?.title.orEmpty())
+                .putExtra(PlayerActivity.EXTRA_NEXT_ITEM_KEY, nextEpisode?.itemKey.orEmpty())
+                .putStringArrayListExtra(PlayerActivity.EXTRA_NEXT_URLS, ArrayList(nextEpisodes.map { it.url }))
+                .putStringArrayListExtra(PlayerActivity.EXTRA_NEXT_FALLBACK_URLS, ArrayList(nextEpisodes.map { it.fallbackUrl }))
+                .putStringArrayListExtra(PlayerActivity.EXTRA_NEXT_TITLES, ArrayList(nextEpisodes.map { it.title }))
+                .putStringArrayListExtra(PlayerActivity.EXTRA_NEXT_ITEM_KEYS, ArrayList(nextEpisodes.map { it.itemKey }))
         )
     }
+
+    private fun stateSeriesPreferenceKey(viewModel: MainViewModel, item: XtreamModels.StreamItem): String =
+        if (item.type == XtreamModels.StreamItem.TYPE_EPISODE) {
+            viewModel.uiState.value.selectedSeriesPreferenceKey.ifBlank { item.key() }
+        } else {
+            item.key()
+        }
 
     private fun openTrailer(title: String, trailer: String) {
         if (trailer.isBlank()) {
@@ -251,6 +280,7 @@ class MainActivity : ComponentActivity() {
 private val TvFocusOutline = Color(0xFF8FA2FF)
 private val TvFocusSurface = Color(0xFF242842)
 private const val DETAIL_PRELOAD_READY_BYTES = 250L * 1024L * 1024L
+private const val CATALOG_HEADER_STATUS_VISIBLE_MS = 4_000L
 @Composable
 private fun MainRoute(
     state: MainUiState,
@@ -261,6 +291,9 @@ private fun MainRoute(
     onToggleFilterHighRating: () -> Unit,
     onToggleFilterRecentYear: () -> Unit,
     onClearCatalogFilters: () -> Unit,
+    onTogglePinnedCategory: (String) -> Unit,
+    onToggleHiddenCategory: (String) -> Unit,
+    onToggleCustomGroupCategory: (String) -> Unit,
     onCatalogSort: (CatalogSort) -> Unit,
     onOpenItem: (XtreamModels.StreamItem) -> Unit,
     onBackToCatalog: () -> Unit,
@@ -277,6 +310,9 @@ private fun MainRoute(
     onClearImageCache: () -> Unit,
     onClearPreloadCache: () -> Unit,
     onClearCatalogCache: () -> Unit,
+    onClearCategoryPreferences: () -> Unit,
+    onPrepareCache: () -> Unit,
+    onRunServerDiagnostic: () -> Unit,
     onHome: () -> Unit,
     onSettings: () -> Unit,
     onCloseSettings: () -> Unit,
@@ -321,6 +357,9 @@ private fun MainRoute(
                     onClearImageCache = onClearImageCache,
                     onClearPreloadCache = onClearPreloadCache,
                     onClearCatalogCache = onClearCatalogCache,
+                    onClearCategoryPreferences = onClearCategoryPreferences,
+                    onPrepareCache = onPrepareCache,
+                    onRunServerDiagnostic = onRunServerDiagnostic,
                     onLogout = onLogout
                 )
             } else if (state.selectedItem != null) {
@@ -338,8 +377,7 @@ private fun MainRoute(
                     onCancelDownload = onCancelDownload,
                     onDeleteDownload = onDeleteDownload,
                     onClearImageCache = onClearImageCache,
-                    onFavorite = onToggleFavorite,
-                    onOpenEpisode = onOpenItem
+                    onFavorite = onToggleFavorite
                 )
             } else {
                 CatalogScreen(
@@ -351,7 +389,11 @@ private fun MainRoute(
                     onToggleFilterHighRating = onToggleFilterHighRating,
                     onToggleFilterRecentYear = onToggleFilterRecentYear,
                     onClearCatalogFilters = onClearCatalogFilters,
+                    onTogglePinnedCategory = onTogglePinnedCategory,
+                    onToggleHiddenCategory = onToggleHiddenCategory,
+                    onToggleCustomGroupCategory = onToggleCustomGroupCategory,
                     onCatalogSort = onCatalogSort,
+                    onPlay = onPlay,
                     onOpenItem = { item, rowTitle ->
                         restoreItemKey = item.key()
                         restoreRowTitle = rowTitle
@@ -387,7 +429,11 @@ private fun CatalogScreen(
     onToggleFilterHighRating: () -> Unit,
     onToggleFilterRecentYear: () -> Unit,
     onClearCatalogFilters: () -> Unit,
+    onTogglePinnedCategory: (String) -> Unit,
+    onToggleHiddenCategory: (String) -> Unit,
+    onToggleCustomGroupCategory: (String) -> Unit,
     onCatalogSort: (CatalogSort) -> Unit,
+    onPlay: (XtreamModels.StreamItem) -> Unit,
     onOpenItem: (XtreamModels.StreamItem, String) -> Unit,
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit,
     onClearImageCache: () -> Unit,
@@ -425,31 +471,62 @@ private fun CatalogScreen(
         val hasCustomSort = state.catalogSort != CatalogSort.RECENT
         val hasCatalogControls = activeFilterCount > 0 || hasCustomSort
         val searchAvailable = state.mode != Mode.FAVORITES && state.mode != Mode.DOWNLOADS
+        val headerStatus = catalogHeaderStatus(state.status)
+        var showHeaderStatus by remember { mutableStateOf(state.status.isNotBlank()) }
+        LaunchedEffect(state.status, state.loading) {
+            if (state.status.isBlank()) {
+                showHeaderStatus = false
+                return@LaunchedEffect
+            }
+            showHeaderStatus = true
+            if (!state.loading) {
+                delay(CATALOG_HEADER_STATUS_VISIBLE_MS)
+                showHeaderStatus = false
+            }
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .focusGroup()
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xB0161830))
-                .border(1.dp, Color(0xFF303656), RoundedCornerShape(14.dp))
-                .padding(horizontal = 9.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            Color(0xCC252B49),
+                            Color(0xB8222A46),
+                            Color(0x8A303757)
+                        ),
+                        start = Offset(0f, 0f),
+                        end = Offset(1700f, 220f)
+                    )
+                )
+                .padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = state.mode.label,
                         color = Color.White,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Black,
                         maxLines = 1
                     )
-                    Text(
-                        catalogHeaderStatus(state.status),
-                        color = Color(0xFFC9C6E4),
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                    if (showHeaderStatus) {
+                        Text(
+                            headerStatus,
+                            color = Color(0xFFC9C6E4),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                if (state.loading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        color = Color(0xFF47D3C2),
+                        strokeWidth = 2.dp
                     )
                 }
                 CatalogHeaderButton(label = "Accueil", modifier = Modifier.width(94.dp), onClick = onHome)
@@ -567,9 +644,9 @@ private fun CatalogScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .padding(top = 10.dp)
+                .padding(top = 3.dp)
                 .background(Color(0x33111625), RoundedCornerShape(14.dp))
-                .padding(top = 8.dp),
+                .padding(top = 2.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp)
         ) {
             state.error?.let { error ->
@@ -583,10 +660,15 @@ private fun CatalogScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-            if (state.loading || !state.catalogInitialized) {
+            if (state.loading) {
+                CatalogLoadingState(state.status, Modifier.weight(1f))
+            } else if (!state.catalogInitialized) {
                 CatalogSkeleton(Modifier.weight(1f))
             } else {
-                val rows = remember(
+                val rows by produceState(
+                    initialValue = state.rows,
+                    state.rows,
+                    state.catalogRowsFiltered,
                     state.searchIndex,
                     state.query,
                     state.filter4k,
@@ -594,14 +676,20 @@ private fun CatalogScreen(
                     state.filterRecentYear,
                     state.catalogSort
                 ) {
-                    filteredRows(
-                        index = state.searchIndex,
-                        query = state.query,
-                        filter4k = state.filter4k,
-                        filterHighRating = state.filterHighRating,
-                        filterRecentYear = state.filterRecentYear,
-                        sort = state.catalogSort
-                    )
+                    value = if (state.catalogRowsFiltered) {
+                        state.rows
+                    } else {
+                        withContext(Dispatchers.Default) {
+                            filteredRows(
+                                index = state.searchIndex,
+                                query = state.query,
+                                filter4k = state.filter4k,
+                                filterHighRating = state.filterHighRating,
+                                filterRecentYear = state.filterRecentYear,
+                                sort = state.catalogSort
+                            )
+                        }
+                    }
                 }
                 val restoreRowIndex = remember(rows, restoreItemKey, restoreRowTitle) {
                     restoreItemKey?.let { key ->
@@ -613,6 +701,9 @@ private fun CatalogScreen(
                 }
                 val effectiveRestoreRowTitle = remember(rows, restoreRowIndex) {
                     rows.getOrNull(restoreRowIndex)?.title
+                }
+                val ultraHdItemKeys = remember(state.searchIndex) {
+                    state.searchIndex.ultraHdItemKeys()
                 }
                 LaunchedEffect(restoreItemKey, restoreRowIndex) {
                     if (restoreItemKey == null) {
@@ -638,7 +729,7 @@ private fun CatalogScreen(
                     LazyColumn(
                         state = listState,
                         verticalArrangement = Arrangement.spacedBy(14.dp),
-                        contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 18.dp),
+                        contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 0.dp, bottom = 18.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .focusGroup()
@@ -657,8 +748,17 @@ private fun CatalogScreen(
                                 rowState = rowState,
                                 restoreItemKey = restoreItemKey,
                                 restoreRowTitle = effectiveRestoreRowTitle,
+                                pinned = categoryPreferenceKey(state.mode, row.title) in state.pinnedCategoryKeys,
+                                grouped = categoryPreferenceKey(state.mode, row.title) in state.customGroupCategoryKeys,
+                                categoryActionsEnabled = state.mode.isCatalogPreferenceMode() && premiumRowKind(row.title) == null,
+                                ultraHdItemKeys = ultraHdItemKeys,
+                                playbackRevision = state.playbackRevision,
                                 onRestoreConsumed = onRestoreConsumed,
+                                onPlay = onPlay,
                                 onOpenItem = { item -> onOpenItem(item, row.title) },
+                                onTogglePinned = { onTogglePinnedCategory(row.title) },
+                                onToggleGrouped = { onToggleCustomGroupCategory(row.title) },
+                                onToggleHidden = { onToggleHiddenCategory(row.title) },
                                 onToggleFavorite = onToggleFavorite
                             )
                         }
@@ -678,6 +778,12 @@ private fun catalogHeaderStatus(status: String): String =
         "Catalogue à jour" -> "Catalogue à jour"
         else -> status.ifBlank { "Catalogue" }
     }
+
+private fun categoryPreferenceKey(mode: Mode, rowTitle: String): String =
+    "${mode.name}|${displayRowTitle(rowTitle)}"
+
+private fun Mode.isCatalogPreferenceMode(): Boolean =
+    this == Mode.LIVE || this == Mode.MOVIES || this == Mode.SERIES
 
 @Composable
 private fun ActiveCatalogControlSummary(
@@ -716,6 +822,16 @@ private fun CatalogSort.next(): CatalogSort {
     return values[(ordinal + 1) % values.size]
 }
 
+private fun shouldPlayHistoryItemDirectly(
+    mode: Mode,
+    rowKind: PremiumRowKind?,
+    item: XtreamModels.StreamItem
+): Boolean =
+    rowKind == PremiumRowKind.HISTORY &&
+        (mode == Mode.MOVIES || mode == Mode.SERIES) &&
+        item.type != XtreamModels.StreamItem.TYPE_SERIES &&
+        (item.playable || item.type == XtreamModels.StreamItem.TYPE_EPISODE)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ContentRow(
@@ -725,8 +841,17 @@ private fun ContentRow(
     rowState: LazyListState,
     restoreItemKey: String?,
     restoreRowTitle: String?,
+    pinned: Boolean,
+    grouped: Boolean,
+    categoryActionsEnabled: Boolean,
+    ultraHdItemKeys: Set<String>,
+    playbackRevision: Long,
     onRestoreConsumed: () -> Unit,
+    onPlay: (XtreamModels.StreamItem) -> Unit,
     onOpenItem: (XtreamModels.StreamItem) -> Unit,
+    onTogglePinned: () -> Unit,
+    onToggleGrouped: () -> Unit,
+    onToggleHidden: () -> Unit,
     onToggleFavorite: (XtreamModels.StreamItem) -> Unit
 ) {
     val visibleTitle = displayRowTitle(row.title)
@@ -752,12 +877,34 @@ private fun ContentRow(
         modifier = Modifier.focusGroup(),
         verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
-        Text(
-            visibleTitle,
-            color = if (premium) Color(0xFFF3F5FF) else Color.White,
-            fontWeight = FontWeight.Bold,
-            style = if (premium) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleSmall
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                visibleTitle,
+                color = if (premium) Color(0xFFF3F5FF) else Color.White,
+                fontWeight = FontWeight.Bold,
+                style = if (premium) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (categoryActionsEnabled) {
+                CatalogHeaderButton(
+                    label = if (pinned) "Désépingler" else "Épingler",
+                    modifier = Modifier.width(118.dp),
+                    onClick = onTogglePinned
+                )
+                CatalogHeaderButton(
+                    label = if (grouped) "Hors groupe" else "Grouper",
+                    modifier = Modifier.width(104.dp),
+                    onClick = onToggleGrouped
+                )
+                CatalogHeaderButton(
+                    label = "Masquer",
+                    modifier = Modifier.width(94.dp),
+                    onClick = onToggleHidden
+                )
+            }
+        }
         LazyRow(
             state = rowState,
             horizontalArrangement = Arrangement.spacedBy(if (premium) 10.dp else 8.dp),
@@ -775,10 +922,18 @@ private fun ContentRow(
                     rowKind = rowKind,
                     mode = mode,
                     rowTitle = visibleTitle,
+                    forceUltraHd = item.key() in ultraHdItemKeys,
+                    playbackRevision = playbackRevision,
                     favorite = favoriteKeys.contains(item.key()),
                     restoreFocus = item.key() == restoreItemKey,
                     onRestoreConsumed = onRestoreConsumed,
-                    onClick = { onOpenItem(item) },
+                    onClick = {
+                        if (shouldPlayHistoryItemDirectly(mode, rowKind, item)) {
+                            onPlay(item)
+                        } else {
+                            onOpenItem(item)
+                        }
+                    },
                     onLongClick = { onToggleFavorite(item) }
                 )
             }
@@ -839,6 +994,45 @@ private fun PremiumEmptyState(
 }
 
 @Composable
+private fun CatalogLoadingState(status: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(24.dp),
+                color = Color(0xFF47D3C2),
+                strokeWidth = 2.dp
+            )
+            Text(
+                text = catalogHeaderStatus(status),
+                color = Color.White,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        LinearProgressIndicator(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp),
+            color = Color(0xFF47D3C2),
+            trackColor = Color(0x33303656)
+        )
+        CatalogSkeleton(Modifier.weight(1f))
+    }
+}
+
+@Composable
 private fun CatalogSkeleton(modifier: Modifier = Modifier) {
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(18.dp),
@@ -893,7 +1087,10 @@ private fun ContentCard(
     rowKind: PremiumRowKind? = null,
     mode: Mode? = null,
     rowTitle: String = "",
+    forceUltraHd: Boolean = false,
+    playbackRevision: Long = 0L,
     favorite: Boolean = false,
+    badges: List<String> = emptyList(),
     restoreFocus: Boolean = false,
     onRestoreConsumed: () -> Unit = {},
     onFocused: () -> Unit = {},
@@ -908,6 +1105,9 @@ private fun ContentCard(
     val resumeMeta = remember(item.key(), rowKind) {
         if (rowKind == PremiumRowKind.HISTORY) resumeCardMeta(context, item) else ""
     }
+    val resumeProgress = remember(item.key(), rowKind, playbackRevision) {
+        if (rowKind == PremiumRowKind.HISTORY) resumeProgressFraction(context, item) else 0f
+    }
     val meta = cardMeta(item, localSize, resumeMeta)
     val cardWidth = when {
         compact -> 146.dp
@@ -915,12 +1115,12 @@ private fun ContentCard(
         else -> 128.dp
     }
     val cardHeight = when {
-        compact -> 148.dp
+        compact -> 190.dp
         premium -> 282.dp
         else -> 262.dp
     }
     val posterHeight = when {
-        compact -> 78.dp
+        compact -> 92.dp
         premium -> 194.dp
         else -> 170.dp
     }
@@ -986,7 +1186,10 @@ private fun ContentCard(
             PosterWithBadges(
                 item = item,
                 qualityHint = rowTitle,
+                forceUltraHd = forceUltraHd,
+                progressFraction = resumeProgress,
                 favorite = favorite,
+                extraBadges = badges,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(posterHeight)
@@ -1021,24 +1224,40 @@ private fun DetailScreen(
     onCancelDownload: () -> Unit,
     onDeleteDownload: (XtreamModels.StreamItem) -> Unit,
     onClearImageCache: () -> Unit,
-    onFavorite: (XtreamModels.StreamItem) -> Unit,
-    onOpenEpisode: (XtreamModels.StreamItem) -> Unit
+    onFavorite: (XtreamModels.StreamItem) -> Unit
 ) {
     val isDownloading = state.downloadingItem?.key() == item.key()
     val isPreloading = state.preloadingItem?.key() == item.key()
     val isFavorite = state.favoriteKeys.contains(item.key())
     val isDownloaded = state.selectedDownloaded
+    val context = LocalContext.current
     val playFocusRequester = remember { FocusRequester() }
+    val continueEpisode = remember(state.seriesInfo, item.key(), state.selectedResumePositionMs, state.playbackRevision) {
+        if (item.type == XtreamModels.StreamItem.TYPE_SERIES) {
+            nextSeriesEpisode(context, state.seriesInfo)
+        } else {
+            null
+        }
+    }
+    val backgroundUrl = state.selectedDetail?.backdropUrl
+        ?.takeIf { url -> url.isNotBlank() }
+        ?: item.imageUrl
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(Color(0x663653FF), Color.Transparent),
-                    radius = 760f
-                )
-            )
+            .background(Color(0xFF0B0D1C))
     ) {
+        DetailBackgroundImage(url = backgroundUrl, title = item.title)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0x663653FF), Color.Transparent),
+                        radius = 760f
+                    )
+                )
+        )
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -1054,7 +1273,13 @@ private fun DetailScreen(
                 favorite = isFavorite,
                 modifier = Modifier.width(186.dp).aspectRatio(2f / 3f)
             )
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp)
+            ) {
                 Text(
                     item.title,
                     color = Color.White,
@@ -1077,23 +1302,41 @@ private fun DetailScreen(
                     )
                 } else {
                     val canPlay = isDownloaded || item.playable || item.type == XtreamModels.StreamItem.TYPE_LIVE
-                    val hasResume = state.selectedResumePositionMs > PlaybackPolicy.RESUME_THRESHOLD_MS
+                    val selectedDurationMs = remember(item.key(), state.selectedResumePositionMs, state.playbackRevision) {
+                        AppStateStore(context).resumeDuration(item.key())
+                    }
+                    val hasResume = state.selectedResumePositionMs > PlaybackPolicy.RESUME_THRESHOLD_MS &&
+                        !isEpisodeWatched(state.selectedResumePositionMs, selectedDurationMs)
                     val trailer = state.selectedDetail?.trailer.orEmpty()
                     val showFavoriteAction = !isDownloaded
-                    LaunchedEffect(item.key(), canPlay) {
-                        if (canPlay) {
+                    LaunchedEffect(item.key(), canPlay, continueEpisode?.key()) {
+                        if (canPlay || continueEpisode != null) {
                             delay(120L)
                             playFocusRequester.requestFocus()
                         }
                     }
                     DetailActionGroup {
-                        DetailActionButton(
-                            label = if (hasResume) "Reprendre" else "Lire",
-                            modifier = Modifier.focusRequester(playFocusRequester),
-                            enabled = canPlay,
-                            primary = true,
-                            onClick = { onPlay(item) }
-                        )
+                        if (item.type != XtreamModels.StreamItem.TYPE_SERIES) {
+                            DetailActionButton(
+                                label = if (hasResume) "Reprendre" else "Lire",
+                                modifier = Modifier.focusRequester(playFocusRequester),
+                                enabled = canPlay,
+                                primary = true,
+                                onClick = { onPlay(item) }
+                            )
+                        }
+                        if (continueEpisode != null) {
+                            DetailActionButton(
+                                label = "Continuer la série",
+                                modifier = if (item.type == XtreamModels.StreamItem.TYPE_SERIES) {
+                                    Modifier.focusRequester(playFocusRequester)
+                                } else {
+                                    Modifier
+                                },
+                                primary = true,
+                                onClick = { onPlay(continueEpisode) }
+                            )
+                        }
                         if (hasResume) {
                                 DetailActionButton(
                                     label = "Depuis début",
@@ -1129,15 +1372,12 @@ private fun DetailScreen(
                             }
                             DetailActionButton(label = "Télécharger", onClick = { onDownload(item) })
                         }
-                    } else if (item.type == XtreamModels.StreamItem.TYPE_LIVE) {
-                        PreloadHelpText(canOfferCompletePreload = false, completeSupported = false)
-                        DetailActionGroup(title = "Précharger le direct") {
-                            DetailActionButton(label = PreloadMode.NORMAL.label, onClick = { onPreload(item, PreloadMode.NORMAL) })
-                            DetailActionButton(label = PreloadMode.LONG.label, onClick = { onPreload(item, PreloadMode.LONG) })
-                        }
                     }
                     if (isDownloaded) {
                         StoragePanel(state, onClearImageCache)
+                    }
+                    if (item.type == XtreamModels.StreamItem.TYPE_LIVE) {
+                        LiveEpgPanel(state.selectedEpg)
                     }
                     val detail = state.selectedDetail
                     if (detail != null) {
@@ -1151,6 +1391,9 @@ private fun DetailScreen(
                     }
                     val series = state.seriesInfo
                     if (series != null) {
+                        val nextEpisode = remember(series, state.selectedItem?.key(), state.playbackRevision) {
+                            nextSeriesEpisode(context, series)
+                        }
                         series.seasons.forEach { season ->
                             Text(season.name, color = Color.White, fontWeight = FontWeight.Bold)
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1158,9 +1401,10 @@ private fun DetailScreen(
                                     ContentCard(
                                         item = episode,
                                         compact = true,
-                                        favorite = state.favoriteKeys.contains(episode.key()),
-                                        onClick = { onOpenEpisode(episode) },
-                                        onLongClick = { onFavorite(episode) }
+                                        badges = episodeBadges(context, episode, nextEpisode),
+                                        favorite = isFavorite,
+                                        onClick = { onPlay(episode) },
+                                        onLongClick = { onFavorite(item) }
                                     )
                                 }
                             }
@@ -1171,6 +1415,107 @@ private fun DetailScreen(
         }
     }
     }
+}
+
+@Composable
+private fun LiveEpgPanel(programs: List<XtreamModels.EpgProgram>) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0xAA161B2F),
+        border = BorderStroke(1.dp, Color(0xFF343B60)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "Programme TV",
+                color = Color(0xFF47D3C2),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Black
+            )
+            if (programs.isEmpty()) {
+                Text("EPG indisponible pour cette chaîne.", color = Color(0xFFC9C6E4), style = MaterialTheme.typography.bodySmall)
+            } else {
+                programs.take(4).forEachIndexed { index, program ->
+                    Text(
+                        text = if (index == 0) "En cours • ${program.title}" else "À suivre • ${program.title}",
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    val meta = listOf(program.start, program.end).filter { value -> value.isNotBlank() }.joinToString(" - ")
+                    if (meta.isNotBlank() || program.description.isNotBlank()) {
+                        Text(
+                            text = listOf(meta, program.description).filter { value -> value.isNotBlank() }.joinToString(" • "),
+                            color = Color(0xFFC9C6E4),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailBackgroundImage(url: String?, title: String) {
+    val cleanUrl = remember(url) { PosterImages.normalizedUrl(url) }
+    if (cleanUrl.isBlank()) {
+        return
+    }
+    val context = LocalContext.current
+    val imageRequest = remember(context, cleanUrl) {
+        ImageRequest.Builder(context)
+            .data(cleanUrl)
+            .diskCacheKey(cleanUrl)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .networkCachePolicy(CachePolicy.ENABLED)
+            .precision(Precision.INEXACT)
+            .allowHardware(true)
+            .crossfade(false)
+            .build()
+    }
+    AsyncImage(
+        model = imageRequest,
+        contentDescription = title,
+        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer { alpha = 0.52f }
+    )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0x550B0D1C),
+                        Color(0xCC0B0D1C),
+                        Color(0xFF0B0D1C)
+                    )
+                )
+            )
+    )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.horizontalGradient(
+                    colors = listOf(
+                        Color(0xF20B0D1C),
+                        Color(0xAA101225),
+                        Color(0xF20B0D1C)
+                    )
+                )
+            )
+    )
 }
 
 @Composable
@@ -1468,10 +1813,17 @@ private fun PreloadOnlyActions(
     val progress = (state.preloadBytes.toFloat() / readyBytes.toFloat()).coerceIn(0f, 1f)
     val ready = state.preloadBytes >= readyBytes
     val modeLabel = state.preloadModeLabel.ifBlank { PreloadMode.NORMAL.label }
+    val playFocusRequester = remember { FocusRequester() }
     val readyLabel = when (modeLabel) {
         PreloadMode.LONG.label -> "Préchargement avancé prêt"
         PreloadMode.COMPLETE.label -> "Préchargement complet prêt"
         else -> "Préchargement prêt"
+    }
+    LaunchedEffect(ready, state.preloadCancelling, state.preloadConverting) {
+        if (ready && !state.preloadCancelling && !state.preloadConverting) {
+            delay(120L)
+            playFocusRequester.requestFocus()
+        }
     }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.widthIn(max = 520.dp)) {
         Text(
@@ -1491,6 +1843,7 @@ private fun PreloadOnlyActions(
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             DetailActionButton(
                 label = "Lire",
+                modifier = Modifier.focusRequester(playFocusRequester),
                 enabled = ready && !state.preloadCancelling && !state.preloadConverting,
                 primary = true,
                 onClick = onPlay
@@ -1522,39 +1875,172 @@ private fun SettingsScreen(
     onClearImageCache: () -> Unit,
     onClearPreloadCache: () -> Unit,
     onClearCatalogCache: () -> Unit,
+    onClearCategoryPreferences: () -> Unit,
+    onPrepareCache: () -> Unit,
+    onRunServerDiagnostic: () -> Unit,
     onLogout: () -> Unit
 ) {
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 20.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .background(Color(0xFF0B0D1C))
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Réglages", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
-                Text(
-                    "Connexion, stockage, player et télécommande",
-                    color = Color(0xFFC9CDEB),
-                    style = MaterialTheme.typography.bodySmall
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0x443653FF), Color.Transparent),
+                        radius = 920f,
+                        center = Offset(180f, 60f)
+                    )
                 )
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 26.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            SettingsHero(
+                state = state,
+                onClose = onClose,
+                onRunServerDiagnostic = onRunServerDiagnostic
+            )
+            BoxWithConstraints {
+                val wide = maxWidth >= 980.dp
+                if (wide) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.weight(1.08f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            SettingsPlaybackSection(
+                                state = state,
+                                onToggleSingleConnection = onToggleSingleConnection,
+                                onNetworkProfile = onNetworkProfile,
+                                onCycleBuffer = onCycleBuffer,
+                                onLiveFormat = onLiveFormat
+                            )
+                            SettingsCatalogSection(
+                                state = state,
+                                onClearCatalogFilters = onClearCatalogFilters,
+                                onClearCategoryPreferences = onClearCategoryPreferences,
+                                onPrepareCache = onPrepareCache
+                            )
+                        }
+                        Column(Modifier.weight(0.92f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            SettingsStorageSection(
+                                state = state,
+                                onClearImageCache = onClearImageCache,
+                                onClearPreloadCache = onClearPreloadCache,
+                                onClearCatalogCache = onClearCatalogCache
+                            )
+                            SettingsDiagnosticsSection(
+                                state = state,
+                                onRunServerDiagnostic = onRunServerDiagnostic
+                            )
+                            RemoteHelpPanel()
+                            SettingsAccountSection(onLogout)
+                        }
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
+                        SettingsPlaybackSection(
+                            state = state,
+                            onToggleSingleConnection = onToggleSingleConnection,
+                            onNetworkProfile = onNetworkProfile,
+                            onCycleBuffer = onCycleBuffer,
+                            onLiveFormat = onLiveFormat
+                        )
+                        SettingsCatalogSection(
+                            state = state,
+                            onClearCatalogFilters = onClearCatalogFilters,
+                            onClearCategoryPreferences = onClearCategoryPreferences,
+                            onPrepareCache = onPrepareCache
+                        )
+                        SettingsStorageSection(
+                            state = state,
+                            onClearImageCache = onClearImageCache,
+                            onClearPreloadCache = onClearPreloadCache,
+                            onClearCatalogCache = onClearCatalogCache
+                        )
+                        SettingsDiagnosticsSection(
+                            state = state,
+                            onRunServerDiagnostic = onRunServerDiagnostic
+                        )
+                        RemoteHelpPanel()
+                        SettingsAccountSection(onLogout)
+                    }
+                }
             }
-            DetailActionButton(label = "Retour", onClick = onClose, modifier = Modifier.width(128.dp))
         }
+    }
+}
 
-        SettingsSectionCard(
-            title = "Sécurité remote",
-            subtitle = "La règle importante reste visible et activable ici."
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SettingsHero(
+    state: MainUiState,
+    onClose: () -> Unit,
+    onRunServerDiagnostic: () -> Unit
+) {
+    Surface(
+        color = Color(0xDD12172A),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, Color(0xFF343B60)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            SettingSwitch("Mode 1 connexion distante", "Garde un seul appel remote actif à la fois.", state.singleConnectionMode, onToggleSingleConnection)
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFF47D3C2), Color(0xFF8FA2FF)))),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("T", color = Color(0xFF070A18), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Réglages", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    SettingsStatusPill("Réseau ${state.networkProfile.label}", Color(0xFF47D3C2))
+                    SettingsStatusPill("Buffer ${state.playerBufferMs / 1000}s", Color(0xFF8FA2FF))
+                    SettingsStatusPill(
+                        if (state.singleConnectionMode) "1 connexion" else "Multi-connexion",
+                        if (state.singleConnectionMode) Color(0xFFFFC857) else Color(0xFF47D3C2)
+                    )
+                }
+            }
+            SettingsActionButton("Tester serveur", onClick = onRunServerDiagnostic, modifier = Modifier.width(156.dp))
+            SettingsActionButton("Retour", primary = true, onClick = onClose, modifier = Modifier.width(118.dp))
         }
+    }
+}
 
-        SettingsSectionCard(
-            title = "Profil réseau",
-            subtitle = "Choisis le comportement adapté à ton Wi-Fi, VPN ou débit."
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+@Composable
+private fun SettingsPlaybackSection(
+    state: MainUiState,
+    onToggleSingleConnection: (Boolean) -> Unit,
+    onNetworkProfile: (NetworkProfile) -> Unit,
+    onCycleBuffer: () -> Unit,
+    onLiveFormat: (String) -> Unit
+) {
+    SettingsSectionCard(
+        title = "Lecture et réseau",
+        subtitle = "Profil de connexion, buffer et format live."
+    ) {
+        SettingSwitch(
+            "Mode 1 connexion distante",
+            "Évite les lectures simultanées quand le fournisseur limite le compte.",
+            state.singleConnectionMode,
+            onToggleSingleConnection
+        )
+        SettingsDivider()
+        SettingsOptionRow(title = "Profil réseau", subtitle = state.networkProfile.description) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 NetworkProfile.entries.forEach { profile ->
                     NetworkProfileCard(
                         profile = profile,
@@ -1565,82 +2051,124 @@ private fun SettingsScreen(
                 }
             }
         }
-
-        SettingsSectionCard(
-            title = "Player",
-            subtitle = "Réglages utiles selon l’écran et la stabilité du flux."
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Format live", color = Color.White, modifier = Modifier.width(170.dp))
-                FilterChip(selected = state.liveFormat == "ts", onClick = { onLiveFormat("ts") }, label = { Text("TS") })
-                FilterChip(selected = state.liveFormat == "m3u8", onClick = { onLiveFormat("m3u8") }, label = { Text("M3U8") })
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Buffer lecteur: ${state.playerBufferMs} ms", color = Color.White, modifier = Modifier.width(220.dp))
-                OutlinedButton(onClick = onCycleBuffer) { Text("Changer") }
-            }
-            Text(
-                "Préchargement: lecture après ${formatBytes(state.networkProfile.preloadReadyBytes)}, avance profil ${formatPreloadTarget(state.networkProfile.preloadAheadBytes)}",
-                color = Color(0xFFC9C6E4),
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-
-        SettingsSectionCard(
-            title = "Catalogue",
-            subtitle = "Options d'affichage rapides pour retrouver une vue propre."
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Filtres et tri", color = Color.White, modifier = Modifier.weight(1f))
-                OutlinedButton(onClick = onClearCatalogFilters) {
-                    Text("Réinitialiser")
-                }
-            }
-            Text(
-                "Remet 4K, note, année et tri sur les valeurs par défaut.",
-                color = Color(0xFFC9C6E4),
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-
-        SettingsSectionCard(
-            title = "Stockage et caches",
-            subtitle = "Vue rapide de l'espace et nettoyage des caches."
-        ) {
-            StorageOverviewRows(state)
-            Text(
-                "Mode auto: l'app utilise les dossiers Android accessibles, y compris USB si Fire OS les expose.",
-                color = Color(0xFFC9C6E4),
-                style = MaterialTheme.typography.bodySmall
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = onClearImageCache) {
-                    Text("Vider affiches")
-                }
-                OutlinedButton(onClick = onClearPreloadCache) {
-                    Text("Vider préchargement")
-                }
-                OutlinedButton(onClick = onClearCatalogCache) {
-                    Text("Vider catalogue")
-                }
-            }
-            Text(
-                "Les téléchargements conservés ne sont pas supprimés ici.",
-                color = Color(0xFFC9C6E4),
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-
-        RemoteHelpPanel()
-
-        SettingsSectionCard(
-            title = "Compte",
-            subtitle = "Changer de compte conserve l’app, mais réinitialise l’accès courant."
-        ) {
-            OutlinedButton(onClick = onLogout, colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFB4AB))) {
-                Text("Déconnecter le compte")
+        SettingsOptionRow(title = "Format live", subtitle = "TS reste rapide, M3U8 est souvent plus tolérant.") {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsChoiceButton("TS", selected = state.liveFormat == "ts", onClick = { onLiveFormat("ts") })
+                SettingsChoiceButton("M3U8", selected = state.liveFormat == "m3u8", onClick = { onLiveFormat("m3u8") })
             }
         }
+        SettingsActionRow(
+            title = "Buffer lecteur",
+            subtitle = "${state.playerBufferMs} ms · préchargement ${formatBytes(state.networkProfile.preloadReadyBytes)}",
+            actionLabel = "Changer",
+            onClick = onCycleBuffer
+        )
+        Text(
+            "Avance profil: ${formatPreloadTarget(state.networkProfile.preloadAheadBytes)}",
+            color = Color(0xFFC9C6E4),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+@Composable
+private fun SettingsCatalogSection(
+    state: MainUiState,
+    onClearCatalogFilters: () -> Unit,
+    onClearCategoryPreferences: () -> Unit,
+    onPrepareCache: () -> Unit
+) {
+    SettingsSectionCard(
+        title = "Catalogue",
+        subtitle = "Tri, catégories et préparation du cache."
+    ) {
+        SettingsActionRow(
+            title = "Filtres et tri",
+            subtitle = "Réinitialise 4K, note, année et tri.",
+            actionLabel = "Réinitialiser",
+            onClick = onClearCatalogFilters
+        )
+        SettingsActionRow(
+            title = "Catégories",
+            subtitle = "Retire les épingles, groupes et catégories masquées.",
+            actionLabel = "Réinitialiser",
+            onClick = onClearCategoryPreferences
+        )
+        SettingsActionRow(
+            title = "Synchro arrière-plan",
+            subtitle = backgroundSyncLabel(state.backgroundSyncStatus),
+            actionLabel = "Préparer",
+            primary = true,
+            onClick = onPrepareCache
+        )
+    }
+}
+
+@Composable
+private fun SettingsDiagnosticsSection(
+    state: MainUiState,
+    onRunServerDiagnostic: () -> Unit
+) {
+    SettingsSectionCard(
+        title = "Diagnostic",
+        subtitle = "État du catalogue local et du serveur Xtream."
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            SettingsMetricCard("Direct", state.catalogDiagnostics.liveCount.toString(), state.catalogDiagnostics.liveUpdatedAt, Modifier.weight(1f))
+            SettingsMetricCard("Films", state.catalogDiagnostics.movieCount.toString(), state.catalogDiagnostics.movieUpdatedAt, Modifier.weight(1f))
+            SettingsMetricCard("Séries", state.catalogDiagnostics.seriesCount.toString(), state.catalogDiagnostics.seriesUpdatedAt, Modifier.weight(1f))
+        }
+        Text(
+            backgroundSyncDetailLabel(state.backgroundSyncStatus),
+            color = Color(0xFFC9C6E4),
+            style = MaterialTheme.typography.bodySmall
+        )
+        SettingsActionRow(
+            title = "Serveur Xtream",
+            subtitle = serverDiagnosticLabel(state.serverDiagnostic),
+            actionLabel = "Tester",
+            onClick = onRunServerDiagnostic
+        )
+    }
+}
+
+@Composable
+private fun SettingsStorageSection(
+    state: MainUiState,
+    onClearImageCache: () -> Unit,
+    onClearPreloadCache: () -> Unit,
+    onClearCatalogCache: () -> Unit
+) {
+    SettingsSectionCard(
+        title = "Stockage",
+        subtitle = "Caches locaux et espace disponible."
+    ) {
+        StorageOverviewRows(state)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            SettingsActionButton("Affiches", onClick = onClearImageCache, modifier = Modifier.weight(1f))
+            SettingsActionButton("Préchargement", onClick = onClearPreloadCache, modifier = Modifier.weight(1.2f))
+            SettingsActionButton("Catalogue", onClick = onClearCatalogCache, modifier = Modifier.weight(1f))
+        }
+        Text(
+            "Les téléchargements conservés ne sont pas supprimés ici.",
+            color = Color(0xFFC9C6E4),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+@Composable
+private fun SettingsAccountSection(onLogout: () -> Unit) {
+    SettingsSectionCard(
+        title = "Compte",
+        subtitle = "Accès courant et changement de profil."
+    ) {
+        SettingsActionButton(
+            label = "Déconnecter le compte",
+            destructive = true,
+            onClick = onLogout,
+            modifier = Modifier.width(230.dp)
+        )
     }
 }
 
@@ -1651,18 +2179,27 @@ private fun SettingsSectionCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     Surface(
-        color = Color(0xAA171B2E),
-        shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, Color(0xFF343B60)),
+        color = Color(0xE6171B2E),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, Color(0xFF3D456F)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, color = Color.White, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black)
-                Text(subtitle, color = Color(0xFF9EA7CD), style = MaterialTheme.typography.labelMedium)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .width(4.dp)
+                        .height(34.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color(0xFF47D3C2))
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
+                    Text(subtitle, color = Color(0xFFB9C0E4), style = MaterialTheme.typography.labelMedium)
+                }
             }
             content()
         }
@@ -1671,24 +2208,225 @@ private fun SettingsSectionCard(
 
 @Composable
 private fun StorageOverviewRows(state: MainUiState) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.widthIn(max = 620.dp)) {
-        StorageMetricRow("Espace libre", state.storageAvailableBytes)
-        StorageMetricRow("Téléchargements", state.storageDownloadBytes)
-        StorageMetricRow("Cache affiches", state.storagePosterCacheBytes)
-        StorageMetricRow("Préchargement temporaire", state.storageTamponCacheBytes)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.widthIn(max = 620.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            SettingsMetricCard("Libre", formatBytes(state.storageAvailableBytes), 0L, Modifier.weight(1f), compact = true)
+            SettingsMetricCard("Téléchargés", formatBytes(state.storageDownloadBytes), 0L, Modifier.weight(1f), compact = true)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            SettingsMetricCard("Affiches", formatBytes(state.storagePosterCacheBytes), 0L, Modifier.weight(1f), compact = true)
+            SettingsMetricCard("Tampon", formatBytes(state.storageTamponCacheBytes), 0L, Modifier.weight(1f), compact = true)
+        }
+    }
+}
+
+@Composable
+private fun SettingsDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(Color(0xFF2A3050))
+    )
+}
+
+@Composable
+private fun SettingsStatusPill(label: String, color: Color) {
+    Text(
+        text = label,
+        color = color,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(color.copy(alpha = 0.14f))
+            .border(1.dp, color.copy(alpha = 0.72f), RoundedCornerShape(999.dp))
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+    )
+}
+
+@Composable
+private fun SettingsOptionRow(
+    title: String,
+    subtitle: String,
+    content: @Composable () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, color = Color.White, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            Text(subtitle, color = Color(0xFFC9C6E4), style = MaterialTheme.typography.bodySmall)
+        }
+        content()
+    }
+}
+
+@Composable
+private fun SettingsActionRow(
+    title: String,
+    subtitle: String,
+    actionLabel: String,
+    primary: Boolean = false,
+    destructive: Boolean = false,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, color = Color.White, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            Text(subtitle, color = Color(0xFFC9C6E4), style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        SettingsActionButton(
+            label = actionLabel,
+            primary = primary,
+            destructive = destructive,
+            onClick = onClick,
+            modifier = Modifier.width(128.dp)
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SettingsActionButton(
+    label: String,
+    modifier: Modifier = Modifier,
+    primary: Boolean = false,
+    destructive: Boolean = false,
+    onClick: () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
+    val accent = when {
+        destructive -> Color(0xFFFF8A9A)
+        primary -> Color(0xFF47D3C2)
+        else -> Color(0xFF8FA2FF)
+    }
+    Surface(
+        modifier = modifier
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .height(40.dp)
+            .onFocusChanged { focusState ->
+                focused = focusState.isFocused
+                if (focusState.isFocused) {
+                    scope.launch {
+                        delay(80L)
+                        bringIntoViewRequester.bringIntoView()
+                    }
+                }
+            }
+            .graphicsLayer {
+                scaleX = if (focused) 1.018f else 1f
+                scaleY = if (focused) 1.018f else 1f
+                shadowElevation = if (focused) 10f else 0f
+            }
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .focusable(),
+        shape = RoundedCornerShape(10.dp),
+        color = when {
+            focused && primary -> Color(0xFF1E5A54)
+            focused -> Color(0xFF2D3358)
+            primary -> Color(0xFF183E3D)
+            destructive -> Color(0xFF35202D)
+            else -> Color(0xFF202540)
+        },
+        border = BorderStroke(if (focused || primary) 2.dp else 1.dp, if (focused || primary || destructive) accent else Color(0xFF4A527D))
+    ) {
+        Box(Modifier.fillMaxSize().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+            Text(label, color = if (destructive) Color(0xFFFFC5CD) else Color.White, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SettingsChoiceButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
+    val accent = Color(0xFF47D3C2)
+    Surface(
+        modifier = Modifier
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .width(92.dp)
+            .height(42.dp)
+            .onFocusChanged { focusState ->
+                focused = focusState.isFocused
+                if (focusState.isFocused) {
+                    scope.launch {
+                        delay(80L)
+                        bringIntoViewRequester.bringIntoView()
+                    }
+                }
+            }
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .focusable(),
+        shape = RoundedCornerShape(10.dp),
+        color = when {
+            selected -> Color(0xFF174340)
+            focused -> Color(0xFF28304F)
+            else -> Color(0xFF202540)
+        },
+        border = BorderStroke(if (selected || focused) 3.dp else 1.dp, if (selected || focused) accent else Color(0xFF4A527D))
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(label, color = Color.White, fontWeight = FontWeight.Black)
+        }
+    }
+}
+
+@Composable
+private fun SettingsMetricCard(
+    label: String,
+    value: String,
+    timestamp: Long,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
+) {
+    Surface(
+        color = Color(0xFF101527),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, Color(0xFF30385D)),
+        modifier = modifier.height(if (compact) 64.dp else 76.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(label, color = Color(0xFFB9C0E4), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            Text(value, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!compact) {
+                Text(
+                    if (timestamp > 0L) formatShortDateTime(timestamp) else "Jamais",
+                    color = Color(0xFF8FA2FF),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1
+                )
+            }
+        }
     }
 }
 
 @Composable
 private fun RemoteHelpPanel() {
     Surface(
-        color = Color(0xFF1B1D30),
-        shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, Color(0xFF333656)),
-        modifier = Modifier.widthIn(max = 720.dp)
+        color = Color(0xE6171B2E),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, Color(0xFF3D456F)),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Aide télécommande", color = Color.White, fontWeight = FontWeight.Bold)
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("Télécommande", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
             RemoteShortcutRow("OK / Centre", "ouvrir, valider, pause/lecture dans le player")
             RemoteShortcutRow("Droite / Gauche", "reculer de 15s ou avancer de 30s si le flux le permet")
             RemoteShortcutRow("Maintenir gauche/droite", "défilement visuel, seek réel au relâchement")
@@ -1700,12 +2438,23 @@ private fun RemoteHelpPanel() {
 
 @Composable
 private fun RemoteShortcutRow(key: String, action: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(key, color = Color(0xFF47D3C2), fontWeight = FontWeight.Bold, modifier = Modifier.width(180.dp))
-        Text(action, color = Color(0xFFC9C6E4), style = MaterialTheme.typography.bodySmall)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            key,
+            color = Color(0xFF47D3C2),
+            fontWeight = FontWeight.Black,
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier
+                .width(142.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .background(Color(0x2210F0D0))
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+        Text(action, color = Color(0xFFC9C6E4), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NetworkProfileCard(
     profile: NetworkProfile,
@@ -1715,25 +2464,41 @@ private fun NetworkProfileCard(
 ) {
     val accent = networkProfileAccent(profile)
     var focused by remember { mutableStateOf(false) }
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
     Surface(
         modifier = modifier
-            .height(82.dp)
-            .onFocusChanged { focused = it.isFocused }
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .height(106.dp)
+            .onFocusChanged { focusState ->
+                focused = focusState.isFocused
+                if (focusState.isFocused) {
+                    scope.launch {
+                        delay(80L)
+                        bringIntoViewRequester.bringIntoView()
+                    }
+                }
+            }
+            .graphicsLayer {
+                scaleX = if (focused) 1.012f else 1f
+                scaleY = if (focused) 1.012f else 1f
+                shadowElevation = if (focused) 9f else 0f
+            }
             .clickable(onClick = onClick)
             .focusable(),
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(11.dp),
         color = when {
-            focused -> Color(0xFF25304A)
-            selected -> Color(0xFF20273D)
-            else -> Color(0xFF171B2E)
+            selected -> Color(0xFF173A3A)
+            focused -> Color(0xFF28304F)
+            else -> Color(0xFF101527)
         },
         border = BorderStroke(
-            width = if (focused || selected) 2.dp else 1.dp,
+            width = if (focused || selected) 3.dp else 1.dp,
             color = if (focused || selected) accent else Color(0xFF333656)
         )
     ) {
         Column(
-            modifier = Modifier.padding(10.dp),
+            modifier = Modifier.padding(11.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1743,11 +2508,11 @@ private fun NetworkProfileCard(
                         .clip(RoundedCornerShape(999.dp))
                         .background(accent)
                 )
-                Text(
-                    profile.label,
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
+            Text(
+                profile.label,
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Black,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -1762,6 +2527,13 @@ private fun NetworkProfileCard(
                 "Précharge ${formatBytes(profile.preloadReadyBytes)}",
                 color = Color(0xFFB9C0E4),
                 style = MaterialTheme.typography.labelMedium,
+                maxLines = 1
+            )
+            Text(
+                if (selected) "Sélectionné" else "Choisir",
+                color = if (selected) accent else Color(0xFF8FA2FF),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Black,
                 maxLines = 1
             )
         }
@@ -1925,18 +2697,50 @@ private fun TvActionIcon(icon: TvButtonIcon, tint: Color, modifier: Modifier = M
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SettingSwitch(title: String, subtitle: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(18.dp),
-        verticalAlignment = Alignment.CenterVertically
+    var focused by remember { mutableStateOf(false) }
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
+    Surface(
+        modifier = Modifier
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .fillMaxWidth()
+            .onFocusChanged { focusState ->
+                focused = focusState.isFocused
+                if (focusState.isFocused) {
+                    scope.launch {
+                        delay(80L)
+                        bringIntoViewRequester.bringIntoView()
+                    }
+                }
+            }
+            .clickable { onChecked(!checked) }
+            .focusable(),
+        color = when {
+            focused -> Color(0xFF28304F)
+            checked -> Color(0xFF173A3A)
+            else -> Color(0xFF101527)
+        },
+        shape = RoundedCornerShape(11.dp),
+        border = BorderStroke(
+            if (focused || checked) 2.dp else 1.dp,
+            if (focused || checked) Color(0xFF47D3C2) else Color(0xFF30385D)
+        )
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, color = Color.White, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-            Text(subtitle, color = Color(0xFFC9C6E4), style = MaterialTheme.typography.bodySmall)
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, color = Color.White, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Black)
+                Text(subtitle, color = Color(0xFFC9C6E4), style = MaterialTheme.typography.bodySmall)
+            }
+            SettingsStatusPill(if (checked) "Actif" else "Inactif", if (checked) Color(0xFF47D3C2) else Color(0xFF8FA2FF))
+            Switch(checked = checked, onCheckedChange = onChecked)
         }
-        Switch(checked = checked, onCheckedChange = onChecked)
     }
 }
 
@@ -1975,7 +2779,7 @@ private fun CatalogHeaderButton(
     val shape = RoundedCornerShape(999.dp)
     Surface(
         modifier = modifier
-            .height(28.dp)
+            .height(34.dp)
             .widthIn(min = 68.dp)
             .onFocusChanged { focused = it.isFocused }
             .graphicsLayer {
@@ -1987,13 +2791,13 @@ private fun CatalogHeaderButton(
             .clickable(enabled = enabled, onClick = onClick)
             .focusable(enabled = enabled),
         color = when {
-            !enabled -> Color(0xFF171B2E)
-            focused -> TvFocusSurface
-            else -> Color(0xFF1B1D30)
+            !enabled -> Color(0x33171B2E)
+            focused -> Color(0xFF2D3358)
+            else -> Color(0x331B1D30)
         },
         border = BorderStroke(
             width = if (focused) 2.dp else 1.dp,
-            color = if (focused) TvFocusOutline else Color(0xFF616789)
+            color = if (focused) TvFocusOutline else Color(0x55616789)
         ),
         shape = shape
     ) {
@@ -2138,10 +2942,10 @@ private fun TvSearchButton(
 ) {
     varFocusedSurface(
         modifier = modifier
-            .height(28.dp)
+            .height(34.dp)
             .clickable(onClick = onClick)
             .focusable(),
-        shape = RoundedCornerShape(10.dp)
+        shape = RoundedCornerShape(999.dp)
     ) {
         Row(
             modifier = Modifier
@@ -2276,6 +3080,114 @@ private fun android.view.KeyEvent.isBackKey(): Boolean =
     keyCode == KeyEvent.KEYCODE_BACK ||
         keyCode == KeyEvent.KEYCODE_ESCAPE
 
+private fun nextSeriesEpisode(context: android.content.Context, series: XtreamModels.SeriesInfo?): XtreamModels.StreamItem? {
+    val episodes = series?.seasons?.flatMap { season -> season.episodes }.orEmpty()
+    if (episodes.isEmpty()) {
+        return null
+    }
+    val store = AppStateStore(context)
+    return episodes.firstOrNull { episode ->
+        val position = store.resumePosition(episode)
+        val duration = store.resumeDuration(episode.key())
+        isEpisodeInProgress(position, duration)
+    } ?: episodes.firstOrNull { episode ->
+        val position = store.resumePosition(episode)
+        val duration = store.resumeDuration(episode.key())
+        !isEpisodeWatched(position, duration)
+    } ?: episodes.firstOrNull()
+}
+
+private fun episodeBadges(
+    context: android.content.Context,
+    episode: XtreamModels.StreamItem,
+    nextEpisode: XtreamModels.StreamItem?
+): List<String> {
+    val store = AppStateStore(context)
+    val position = store.resumePosition(episode)
+    val duration = store.resumeDuration(episode.key())
+    return buildList {
+        if (nextEpisode?.key() == episode.key()) {
+            add("Suivant")
+        }
+        when {
+            isEpisodeWatched(position, duration) -> add("Vu")
+            isEpisodeInProgress(position, duration) -> add("En cours")
+        }
+    }
+}
+
+private fun isEpisodeInProgress(positionMs: Long, durationMs: Long): Boolean =
+    positionMs > PlaybackPolicy.RESUME_THRESHOLD_MS && !isEpisodeWatched(positionMs, durationMs)
+
+private fun resumeProgressFraction(context: android.content.Context, item: XtreamModels.StreamItem): Float {
+    val store = AppStateStore(context)
+    val position = store.resumePosition(item)
+    val duration = store.resumeDuration(item.key())
+    if (duration <= PlaybackPolicy.RESUME_THRESHOLD_MS || position <= PlaybackPolicy.RESUME_THRESHOLD_MS) {
+        return 0f
+    }
+    return (position.toFloat() / duration.toFloat()).coerceIn(0.03f, 1f)
+}
+
+private fun isEpisodeWatched(positionMs: Long, durationMs: Long): Boolean {
+    if (durationMs <= 0L || positionMs <= 0L) {
+        return false
+    }
+    return positionMs >= durationMs - 60_000L || positionMs >= (durationMs * 92L / 100L)
+}
+
+private fun backgroundSyncLabel(status: BackgroundSyncStatus): String {
+    val timestamp = when {
+        status.finishedAt > 0L -> formatShortDateTime(status.finishedAt)
+        status.startedAt > 0L -> formatShortDateTime(status.startedAt)
+        else -> ""
+    }
+    val suffix = if (timestamp.isBlank()) "" else " • $timestamp"
+    return when (status.state) {
+        BackgroundSyncStatusState.QUEUED -> "En attente$suffix"
+        BackgroundSyncStatusState.RUNNING -> "En cours$suffix"
+        BackgroundSyncStatusState.SUCCESS ->
+            "${status.message.ifBlank { "Cache préparé" }} (${status.refreshedModes} sections)$suffix"
+        BackgroundSyncStatusState.FAILED ->
+            "Erreur: ${status.message.ifBlank { "synchro impossible" }}$suffix"
+        else -> "Jamais exécutée"
+    }
+}
+
+private fun formatShortDateTime(timestamp: Long): String =
+    SimpleDateFormat("dd/MM HH:mm", Locale.FRANCE).format(Date(timestamp))
+
+@Composable
+private fun CatalogDiagnosticRow(label: String, count: Int, updatedAt: Long) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(label, color = Color(0xFFC9C6E4), modifier = Modifier.width(80.dp))
+        Text("$count items", color = Color.White, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(92.dp))
+        Text(
+            if (updatedAt > 0L) formatShortDateTime(updatedAt) else "Jamais synchronisé",
+            color = Color(0xFFC9C6E4),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+private fun backgroundSyncDetailLabel(status: BackgroundSyncStatus): String {
+    val duration = if (status.startedAt > 0L && status.finishedAt > status.startedAt) {
+        " • durée ${((status.finishedAt - status.startedAt) / 1000L).coerceAtLeast(1L)}s"
+    } else {
+        ""
+    }
+    return "Préparation cache: ${backgroundSyncLabel(status)}$duration"
+}
+
+private fun serverDiagnosticLabel(diagnostic: ServerDiagnostic): String {
+    if (diagnostic.checkedAt <= 0L) {
+        return "Jamais testé"
+    }
+    val latency = if (diagnostic.latencyMs >= 0L) " • ${diagnostic.latencyMs} ms" else ""
+    val state = if (diagnostic.success) "OK" else "Erreur"
+    return "$state$latency • ${formatShortDateTime(diagnostic.checkedAt)} • ${diagnostic.message}"
+}
+
 @Composable
 private fun StorageCompactMetric(label: String, bytes: Long, modifier: Modifier = Modifier) {
     Row(
@@ -2329,11 +3241,11 @@ private fun CatalogControlSeparator() {
 private fun TvChip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     varFocusedSurface(
         modifier = modifier
-            .height(28.dp)
+            .height(34.dp)
             .clickable(onClick = onClick)
             .focusable(),
         selected = selected,
-        shape = RoundedCornerShape(10.dp)
+        shape = RoundedCornerShape(999.dp)
     ) {
         Box(
             modifier = Modifier
@@ -2373,12 +3285,12 @@ private fun varFocusedSurface(
         shape = shape,
         color = when {
             focused -> TvFocusSurface
-            selected -> Color(0xFF3A356B)
-            else -> Color(0xFF1B1D30)
+            selected -> Color(0xFF233D45)
+            else -> Color(0x661B1D30)
         },
         border = BorderStroke(
             if (focused) 2.dp else if (selected) 2.dp else 1.dp,
-            if (focused) TvFocusOutline else if (selected) Color(0xFF47D3C2) else Color(0xFF333656)
+            if (focused) TvFocusOutline else if (selected) Color(0xFF14D7C5) else Color(0x55333656)
         )
     ) {
         content()
@@ -2391,7 +3303,10 @@ private fun PosterWithBadges(
     modifier: Modifier,
     qualityHint: String = "",
     ratingOverride: String? = null,
-    favorite: Boolean = false
+    forceUltraHd: Boolean = false,
+    progressFraction: Float = 0f,
+    favorite: Boolean = false,
+    extraBadges: List<String> = emptyList()
 ) {
     BoxWithConstraints(modifier) {
         Poster(
@@ -2418,13 +3333,43 @@ private fun PosterWithBadges(
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-            if (isUltraHd(item, qualityHint)) {
+            if (forceUltraHd || isUltraHd(item, qualityHint)) {
                 PosterBadge("4K", Color(0xFF47D3C2), Color(0xFF071412))
             }
             displayRating(ratingOverride, item.rating)?.let { rating ->
                 PosterBadge("★ $rating", Color(0xFFFFD166), Color(0xFF1A1200))
             }
+            extraBadges.forEach { badge ->
+                PosterBadge(badge, Color(0xFF8FA2FF), Color(0xFF090C20))
+            }
         }
+        if (progressFraction > 0f) {
+            PosterProgressBar(
+                fraction = progressFraction,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun PosterProgressBar(fraction: Float, modifier: Modifier = Modifier) {
+    val clamped = fraction.coerceIn(0f, 1f)
+    Box(
+        modifier = modifier
+            .height(5.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color(0xAA070A18))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(clamped)
+                .background(Color(0xFF47D3C2))
+        )
     }
 }
 
@@ -2466,12 +3411,7 @@ private fun PosterBadge(
 
 @Composable
 private fun Poster(url: String?, title: String, modifier: Modifier) {
-    val context = LocalContext.current
-    val loader = remember { PosterLoader(context) }
-    val cleanUrl = url?.trim().orEmpty()
-    DisposableEffect(loader) {
-        onDispose { loader.shutdown() }
-    }
+    val cleanUrl = remember(url) { PosterImages.normalizedUrl(url) }
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
@@ -2490,17 +3430,24 @@ private fun Poster(url: String?, title: String, modifier: Modifier) {
         if (cleanUrl.isBlank()) {
             PosterFallback(title = title)
         } else {
-            AndroidView(
+            val context = LocalContext.current
+            val imageRequest = remember(context, cleanUrl) {
+                ImageRequest.Builder(context)
+                    .data(cleanUrl)
+                    .diskCacheKey(cleanUrl)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .networkCachePolicy(CachePolicy.ENABLED)
+                    .precision(Precision.INEXACT)
+                    .allowHardware(true)
+                    .crossfade(false)
+                    .build()
+            }
+            AsyncImage(
+                model = imageRequest,
+                contentDescription = title,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    ImageView(ctx).apply {
-                        scaleType = ImageView.ScaleType.CENTER_CROP
-                        setBackgroundColor(0x00000000)
-                    }
-                },
-                update = { imageView ->
-                    loader.load(cleanUrl, imageView, 0x00000000)
-                }
             )
         }
     }

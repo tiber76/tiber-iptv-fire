@@ -7,6 +7,8 @@ import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
 import android.widget.ImageView
+import coil.annotation.ExperimentalCoilApi
+import coil.Coil
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -19,6 +21,7 @@ import java.util.concurrent.Executors
 import kotlin.math.max
 
 class PosterLoader(context: Context) {
+    private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val diskDir = File(context.cacheDir, CacheDirectories.POSTERS)
 
@@ -89,10 +92,16 @@ class PosterLoader(context: Context) {
 
     fun diskCacheBytes(): Long = diskUsage(diskDir) + diskUsage(legacyDiskDir)
 
+    @OptIn(ExperimentalCoilApi::class)
     fun clearCache() {
         memoryCache.evictAll()
         clearDirectory(diskDir)
         clearDirectory(legacyDiskDir)
+        runCatching {
+            val imageLoader = Coil.imageLoader(appContext)
+            imageLoader.memoryCache?.clear()
+            imageLoader.diskCache?.clear()
+        }
     }
 
     private fun readFromDisk(url: String): Bitmap? {
@@ -148,6 +157,8 @@ class PosterLoader(context: Context) {
             activeConnection?.disconnect()
             RemoteActionGuard.release(RemoteLabels.POSTER)
         }
+
+        fun awaitRemoteImageSlot(): Boolean = acquirePosterSlot()
 
         private fun fetch(url: String): Bitmap? {
             val normalizedUrl = normalizeUrl(url) ?: return null

@@ -33,6 +33,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var credentials = credentialStore.load()
     private var api = if (credentials.isComplete()) XtreamApi(credentials) else null
     private var loadJob: Job? = null
+    private var catalogFilterJob: Job? = null
+    private var imageWarmupJob: Job? = null
     private var downloadJob: Job? = null
     private var preloadJob: Job? = null
     private var activePreloadSession: PreloadStreamServer.Session? = null
@@ -55,7 +57,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             storageDownloadBytes = initialStorage.downloadBytes,
             storagePosterCacheBytes = initialStorage.posterCacheBytes,
             storageTamponCacheBytes = initialStorage.tamponCacheBytes,
-            downloadTreeUri = stateStore.downloadTreeUri()
+            downloadTreeUri = stateStore.downloadTreeUri(),
+            backgroundSyncStatus = stateStore.backgroundSyncStatus(),
+            catalogDiagnostics = stateStore.catalogDiagnostics(),
+            serverDiagnostic = stateStore.serverDiagnostic(),
+            pinnedCategoryKeys = stateStore.pinnedCategoryKeys(),
+            hiddenCategoryKeys = stateStore.hiddenCategoryKeys(),
+            customGroupCategoryKeys = stateStore.customGroupCategoryKeys()
         )
     )
     val uiState: StateFlow<MainUiState> = _uiState
@@ -69,6 +77,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ViewModelHolder.current = null
         }
         activeDownloadConnection?.disconnect()
+        catalogFilterJob?.cancel()
+        imageWarmupJob?.cancel()
         activePreloadSession?.stop()
         activePreloadItem = null
         PreloadStreamServer.stop()
@@ -82,6 +92,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.withStorage(storage).copy(
                 downloadTreeUri = stateStore.downloadTreeUri(),
+                backgroundSyncStatus = stateStore.backgroundSyncStatus(),
+                catalogDiagnostics = stateStore.catalogDiagnostics(),
+                serverDiagnostic = stateStore.serverDiagnostic(),
+                pinnedCategoryKeys = stateStore.pinnedCategoryKeys(),
+                hiddenCategoryKeys = stateStore.hiddenCategoryKeys(),
+                customGroupCategoryKeys = stateStore.customGroupCategoryKeys(),
                 settingsVisible = true,
                 loading = false,
                 error = null,
@@ -121,6 +137,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loadMode(mode: Mode, forceRefresh: Boolean) {
         val resetCatalogControls = mode != _uiState.value.mode
         loadJob?.cancel()
+        imageWarmupJob?.cancel()
         if (mode == Mode.FAVORITES) {
             val rows = favoriteRows()
             _uiState.update {
@@ -128,6 +145,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     mode = mode,
                     rows = rows,
                     searchIndex = CatalogSearchIndex.fromRows(rows),
+                    catalogRowsFiltered = false,
                     query = if (resetCatalogControls) "" else it.query,
                     filter4k = if (resetCatalogControls) false else it.filter4k,
                     filterHighRating = if (resetCatalogControls) false else it.filterHighRating,
@@ -155,6 +173,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     mode = mode,
                     rows = rows,
                     searchIndex = CatalogSearchIndex.fromRows(rows),
+                    catalogRowsFiltered = false,
                     query = if (resetCatalogControls) "" else it.query,
                     filter4k = if (resetCatalogControls) false else it.filter4k,
                     filterHighRating = if (resetCatalogControls) false else it.filterHighRating,
@@ -190,7 +209,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 selectedResumePositionMs = 0L,
                 selectedDetail = null,
                 seriesInfo = null,
+                selectedEpg = emptyList(),
                 settingsVisible = false,
+                catalogRowsFiltered = false,
                 status = if (forceRefresh) "Synchronisation ${mode.label}..." else "Chargement ${mode.label}..."
             )
         }
@@ -198,21 +219,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var remoteGuardAcquired = false
             try {
                 if (!forceRefresh) {
-                    val cached = withContext(Dispatchers.IO) { stateStore.loadRows(mode.name) }
-                    if (cached.isNotEmpty()) {
-                        val displayRows = withContext(Dispatchers.Default) {
-                            indexedRows(withHistoryRow(mode, cached))
+                    val cached = withContext(Dispatchers.IO) { stateStore.loadIndexedRows(mode.name) }
+                    if (cached.rows.isNotEmpty()) {
+                        val controls = _uiState.value.catalogControls()
+                        val displayRows = withContext(Dispatchers.IO) {
+                            sqlCatalogRows(mode, controls)
                         }
                         _uiState.update {
                             it.copy(
                                 rows = displayRows.rows,
                                 searchIndex = displayRows.searchIndex,
+                                catalogRowsFiltered = true,
                                 loading = false,
                                 catalogInitialized = true,
                                 error = null,
                                 status = "Cache local"
                             )
                         }
+                        warmCatalogImages(displayRows.rows, waitForWarmup = false)
                         return@launch
                     }
                 }
@@ -227,6 +251,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                     return@launch
+                }
+                if (forceRefresh) {
+                    preemptBackgroundCatalogSync()
                 }
                 if (!RemoteActionGuard.tryAcquire(RemoteLabels.sync(mode.label))) {
                     _uiState.update {
@@ -243,7 +270,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 remoteGuardAcquired = true
                 _uiState.update { it.copy(status = "Synchronisation ${mode.label}...") }
 
-                val rows = withContext(Dispatchers.IO) { fetchRows(api, mode) }
+                val rows = withContext(Dispatchers.IO) { CatalogSyncEngine.fetchRows(api, mode) }
                 if (rows.isEmpty()) {
                     _uiState.update {
                         it.copy(
@@ -256,20 +283,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 withContext(Dispatchers.IO) { stateStore.saveRows(mode.name, rows) }
-                val displayRows = withContext(Dispatchers.Default) {
-                    indexedRows(withHistoryRow(mode, rows))
+                val controls = _uiState.value.catalogControls()
+                val displayRows = withContext(Dispatchers.IO) {
+                    sqlCatalogRows(mode, controls)
                 }
+                _uiState.update { it.copy(status = "Hydratation fiches...") }
+                withContext(Dispatchers.IO) { CatalogSyncEngine.hydrateDetails(api, stateStore, mode, rows) }
+                _uiState.update { it.copy(status = "Préchargement affiches...") }
+                warmCatalogImages(displayRows.rows, waitForWarmup = true)
                 _uiState.update {
                     it.copy(
                         rows = displayRows.rows,
                         searchIndex = displayRows.searchIndex,
+                        catalogRowsFiltered = true,
                         loading = false,
                         catalogInitialized = true,
                         selectedQualityHint = "",
                         selectedSizeBytes = -1L,
                         selectedResumePositionMs = 0L,
                         error = null,
-                        status = "Catalogue à jour"
+                        status = "Catalogue à jour",
+                        catalogDiagnostics = stateStore.catalogDiagnostics()
                     )
                 }
             } catch (exception: CancellationException) {
@@ -291,20 +325,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun preemptBackgroundCatalogSync() {
+        if (RemoteActionGuard.activeLabel() != RemoteLabels.BACKGROUND_SYNC) {
+            return
+        }
+        CatalogSyncScheduler.preemptRunningBackgroundSync(appContext)
+        stateStore.markBackgroundSyncFailure("Interrompue par rechargement manuel")
+    }
+
+    private suspend fun warmCatalogImages(rows: List<XtreamModels.ContentRow>, waitForWarmup: Boolean) {
+        imageWarmupJob?.cancel()
+        if (waitForWarmup) {
+            PosterImages.warmCatalog(appContext, rows)
+            return
+        }
+        imageWarmupJob = viewModelScope.launch {
+            PosterImages.warmCatalog(appContext, rows)
+        }
+    }
+
     fun setQuery(value: String) {
         _uiState.update { it.copy(query = value) }
+        refreshSqlCatalogRows()
     }
 
     fun toggleFilter4k() {
         _uiState.update { it.copy(filter4k = !it.filter4k) }
+        refreshSqlCatalogRows()
     }
 
     fun toggleFilterHighRating() {
         _uiState.update { it.copy(filterHighRating = !it.filterHighRating) }
+        refreshSqlCatalogRows()
     }
 
     fun toggleFilterRecentYear() {
         _uiState.update { it.copy(filterRecentYear = !it.filterRecentYear) }
+        refreshSqlCatalogRows()
     }
 
     fun clearCatalogFilters() {
@@ -316,17 +373,145 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 catalogSort = CatalogSort.RECENT
             )
         }
+        refreshSqlCatalogRows()
+    }
+
+    fun togglePinnedCategory(rowTitle: String) {
+        val key = categoryPreferenceKey(_uiState.value.mode, rowTitle)
+        stateStore.togglePinnedCategory(key)
+        _uiState.update { it.copy(pinnedCategoryKeys = stateStore.pinnedCategoryKeys()) }
+        refreshSqlCatalogRows()
+    }
+
+    fun toggleHiddenCategory(rowTitle: String) {
+        val key = categoryPreferenceKey(_uiState.value.mode, rowTitle)
+        stateStore.toggleHiddenCategory(key)
+        _uiState.update { it.copy(hiddenCategoryKeys = stateStore.hiddenCategoryKeys()) }
+        refreshSqlCatalogRows()
+    }
+
+    fun toggleCustomGroupCategory(rowTitle: String) {
+        val key = categoryPreferenceKey(_uiState.value.mode, rowTitle)
+        stateStore.toggleCustomGroupCategory(key)
+        _uiState.update { it.copy(customGroupCategoryKeys = stateStore.customGroupCategoryKeys()) }
+        refreshSqlCatalogRows()
+    }
+
+    fun clearCategoryPreferences() {
+        stateStore.clearCategoryPreferences()
+        _uiState.update {
+            it.copy(
+                pinnedCategoryKeys = emptySet(),
+                hiddenCategoryKeys = emptySet(),
+                customGroupCategoryKeys = emptySet(),
+                status = "Catégories réinitialisées"
+            )
+        }
+        refreshSqlCatalogRows()
     }
 
     fun setCatalogSort(sort: CatalogSort) {
         _uiState.update { it.copy(catalogSort = sort) }
+        refreshSqlCatalogRows()
+    }
+
+    private fun refreshSqlCatalogRows() {
+        val state = _uiState.value
+        if (!state.mode.isSqlCatalogMode() || state.loading || !state.catalogInitialized) {
+            return
+        }
+        val mode = state.mode
+        val controls = state.catalogControls()
+        catalogFilterJob?.cancel()
+        catalogFilterJob = viewModelScope.launch {
+            val displayRows = withContext(Dispatchers.IO) {
+                sqlCatalogRows(mode, controls)
+            }
+            _uiState.update { current ->
+                if (
+                    current.mode == mode &&
+                    current.catalogControls() == controls &&
+                    !current.loading &&
+                    current.catalogInitialized
+                ) {
+                    current.copy(
+                        rows = displayRows.rows,
+                        searchIndex = displayRows.searchIndex,
+                        catalogRowsFiltered = true
+                    )
+                } else {
+                    current
+                }
+            }
+        }
+    }
+
+    private fun sqlCatalogRows(mode: Mode, controls: CatalogControls): IndexedCatalogRows {
+        val indexedRows = stateStore.loadFilteredIndexedRows(
+            scope = mode.name,
+            query = controls.query,
+            filter4k = controls.filter4k,
+            filterHighRating = controls.filterHighRating,
+            filterRecentYear = controls.filterRecentYear,
+            sort = controls.sort
+        )
+        return if (controls.query.isBlank()) {
+            withHistoryRow(mode, applyCategoryPreferences(mode, indexedRows))
+        } else {
+            indexedRows
+        }
+    }
+
+    private fun applyCategoryPreferences(mode: Mode, indexedRows: IndexedCatalogRows): IndexedCatalogRows {
+        val pinnedKeys = stateStore.pinnedCategoryKeys()
+        val hiddenKeys = stateStore.hiddenCategoryKeys()
+        val customGroupKeys = stateStore.customGroupCategoryKeys()
+        if (pinnedKeys.isEmpty() && hiddenKeys.isEmpty() && customGroupKeys.isEmpty()) {
+            return indexedRows
+        }
+        val visibleRows = indexedRows.rows
+            .filterNot { row -> categoryPreferenceKey(mode, row.title) in hiddenKeys }
+        val customGroupRow = customGroupRow(mode, visibleRows, customGroupKeys)
+        val rows = visibleRows
+            .sortedWith(
+                compareByDescending<XtreamModels.ContentRow> { row ->
+                    categoryPreferenceKey(mode, row.title) in pinnedKeys
+                }
+            )
+            .let { sortedRows ->
+                if (customGroupRow == null) sortedRows else listOf(customGroupRow) + sortedRows
+            }
+        return IndexedCatalogRows(rows, CatalogSearchIndex.fromRows(rows))
+    }
+
+    private fun customGroupRow(
+        mode: Mode,
+        rows: List<XtreamModels.ContentRow>,
+        customGroupKeys: Set<String>
+    ): XtreamModels.ContentRow? {
+        if (customGroupKeys.isEmpty()) {
+            return null
+        }
+        val items = rows
+            .asSequence()
+            .filter { row -> categoryPreferenceKey(mode, row.title) in customGroupKeys }
+            .flatMap { row -> row.items.asSequence() }
+            .distinctBy { item -> item.key() }
+            .take(CUSTOM_GROUP_ITEM_LIMIT)
+            .toList()
+        if (items.isEmpty()) {
+            return null
+        }
+        return XtreamModels.ContentRow("${premiumRowPrefix(PremiumRowKind.CUSTOM_GROUP)}Mon groupe", items)
     }
 
     private fun qualityHintFor(item: XtreamModels.StreamItem): String {
         val ignoredRows = setOf("Reprendre", "Mes favoris", "Téléchargés")
         val rows = _uiState.value.rows
         return rows.firstOrNull { row ->
-            row.title !in ignoredRows && row.items.any { candidate -> candidate.key() == item.key() }
+            row.title !in ignoredRows &&
+                premiumRowKind(row.title) == null &&
+                row.items.any { candidate -> candidate.key() == item.key() }
         }?.title ?: rows.firstOrNull { row ->
             row.items.any { candidate -> candidate.key() == item.key() }
         }?.title.orEmpty()
@@ -349,14 +534,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val qualityHint = qualityHintFor(item)
         val localSize = downloadedSize(item)
         _uiState.update {
+            val keepSeriesInfo = item.type == XtreamModels.StreamItem.TYPE_EPISODE
+            val seriesPreferenceKey = when (item.type) {
+                XtreamModels.StreamItem.TYPE_SERIES -> item.key()
+                XtreamModels.StreamItem.TYPE_EPISODE -> it.selectedSeriesPreferenceKey
+                else -> ""
+            }
             it.copy(
                 selectedItem = item,
                 selectedQualityHint = qualityHint,
                 selectedSizeBytes = if (localSize >= 0L) localSize else stateStore.cachedContentLength(item),
                 selectedDownloaded = localSize >= 0L,
                 selectedResumePositionMs = stateStore.resumePosition(item),
+                selectedSeriesPreferenceKey = seriesPreferenceKey,
                 selectedDetail = null,
-                seriesInfo = null,
+                seriesInfo = if (keepSeriesInfo) it.seriesInfo else null,
+                selectedEpg = emptyList(),
                 error = null
             )
         }
@@ -364,7 +557,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             loadMovieDetail(item)
         } else if (item.type == XtreamModels.StreamItem.TYPE_SERIES) {
             loadSeries(item)
+        } else if (item.type == XtreamModels.StreamItem.TYPE_LIVE) {
+            loadLiveEpg(item)
         }
+    }
+
+    fun nextEpisodePlayback(item: XtreamModels.StreamItem): NextEpisodePlayback? {
+        return nextEpisodePlaybackQueue(item, limit = 1).firstOrNull()
+    }
+
+    fun nextEpisodePlaybackQueue(item: XtreamModels.StreamItem, limit: Int = NEXT_EPISODE_QUEUE_LIMIT): List<NextEpisodePlayback> {
+        if (item.type != XtreamModels.StreamItem.TYPE_EPISODE) {
+            return emptyList()
+        }
+        val api = api ?: return emptyList()
+        return episodesAfter(item)
+            .take(limit)
+            .mapNotNull { episode ->
+                val local = downloadedPlaybackUri(episode)
+                val nextUrl = local?.toString() ?: api.streamUrl(episode, null)
+                NextEpisodePlayback(
+                    title = episode.title,
+                    itemKey = episode.key(),
+                    url = nextUrl,
+                    fallbackUrl = ""
+                )
+            }
     }
 
     fun closeDetail() {
@@ -376,7 +594,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 selectedDownloaded = false,
                 selectedResumePositionMs = 0L,
                 selectedDetail = null,
-                seriesInfo = null
+                seriesInfo = null,
+                selectedEpg = emptyList()
             )
         }
         val mode = _uiState.value.mode
@@ -401,6 +620,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 selectedDownloaded = if (it.mode == Mode.FAVORITES && !added) false else it.selectedDownloaded,
                 selectedDetail = if (it.mode == Mode.FAVORITES && !added) null else it.selectedDetail,
                 seriesInfo = if (it.mode == Mode.FAVORITES && !added) null else it.seriesInfo,
+                selectedEpg = if (it.mode == Mode.FAVORITES && !added) emptyList() else it.selectedEpg,
                 status = if (added) "Ajouté aux favoris" else "Retiré des favoris"
             )
         }
@@ -452,14 +672,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return null
         }
         stateStore.addHistory(item)
-        val liveFormat = stateStore.liveFormat()
-        val url = api.streamUrl(item, liveFormat)
-        val fallback = if (item.type == XtreamModels.StreamItem.TYPE_LIVE) {
-            api.streamUrl(item, if (liveFormat == "ts") "m3u8" else "ts")
+        val policy = playbackNetworkPolicy(item)
+        val url = api.streamUrl(item, policy.streamFormat)
+        val fallback = if (policy.retryOnAlternateLiveFormat) {
+            api.streamUrl(item, policy.fallbackFormat)
         } else {
             ""
         }
         return PlaybackRequest(url, fallback, RemoteLabels.PLAYBACK)
+    }
+
+    private fun playbackNetworkPolicy(item: XtreamModels.StreamItem): PlaybackNetworkPolicy {
+        return PlaybackPolicy.networkPolicy(
+            itemType = item.type,
+            liveFormat = stateStore.liveFormat(),
+            bufferMs = stateStore.playerBufferMs()
+        )
+    }
+
+    private fun nextEpisodeAfter(item: XtreamModels.StreamItem): XtreamModels.StreamItem? {
+        return episodesAfter(item).firstOrNull()
+    }
+
+    private fun episodesAfter(item: XtreamModels.StreamItem): List<XtreamModels.StreamItem> {
+        val episodes = _uiState.value.seriesInfo?.seasons
+            ?.flatMap { season -> season.episodes }
+            .orEmpty()
+        val index = episodes.indexOfFirst { episode -> episode.key() == item.key() }
+        if (index < 0 || index + 1 >= episodes.size) {
+            return emptyList()
+        }
+        return episodes.drop(index + 1)
     }
 
     fun startPreload(item: XtreamModels.StreamItem, preloadMode: PreloadMode = PreloadMode.NORMAL) {
@@ -468,6 +711,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         cleanupBufferedPlaybackIfIdle()
         if (item.type == XtreamModels.StreamItem.TYPE_SERIES) {
             _uiState.update { it.copy(error = "Choisis un épisode avant de précharger.") }
+            return
+        }
+        if (item.type == XtreamModels.StreamItem.TYPE_LIVE) {
+            _uiState.update { it.copy(error = "Préchargement indisponible sur les chaînes en direct.") }
             return
         }
         val profile = stateStore.networkProfile()
@@ -737,7 +984,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshStorage() {
         val storage = storageInfo()
-        _uiState.update { it.withStorage(storage) }
+        _uiState.update {
+            it.withStorage(storage).copy(
+                backgroundSyncStatus = stateStore.backgroundSyncStatus(),
+                catalogDiagnostics = stateStore.catalogDiagnostics()
+            )
+        }
+    }
+
+    fun enqueueBackgroundCatalogSync() {
+        stateStore.markBackgroundSyncQueued()
+        CatalogSyncScheduler.enqueueNow(appContext)
+        _uiState.update {
+            it.copy(
+                backgroundSyncStatus = stateStore.backgroundSyncStatus(),
+                status = "Préparation cache planifiée",
+                error = null
+            )
+        }
+    }
+
+    fun runServerDiagnostic() {
+        val api = api
+        if (api == null) {
+            _uiState.update { it.copy(error = "Compte Xtream absent.") }
+            return
+        }
+        if (!RemoteActionGuard.tryAcquire(REMOTE_LABEL_SERVER_DIAGNOSTIC)) {
+            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Diagnostic serveur")) }
+            return
+        }
+        _uiState.update { it.copy(status = "Diagnostic serveur...", error = null) }
+        viewModelScope.launch {
+            try {
+                val diagnostic = withContext(Dispatchers.IO) {
+                    val startedAt = System.currentTimeMillis()
+                    try {
+                        val account = api.getAccountInfo()
+                        val latency = System.currentTimeMillis() - startedAt
+                        ServerDiagnostic(
+                            checkedAt = System.currentTimeMillis(),
+                            latencyMs = latency,
+                            success = account.isAllowed(),
+                            message = if (account.isAllowed()) "API OK" else account.message.ifBlank { "Compte non autorisé" }
+                        )
+                    } catch (exception: Exception) {
+                        ServerDiagnostic(
+                            checkedAt = System.currentTimeMillis(),
+                            latencyMs = -1L,
+                            success = false,
+                            message = exception.message ?: exception.javaClass.simpleName
+                        )
+                    }
+                }
+                stateStore.saveServerDiagnostic(diagnostic)
+                _uiState.update {
+                    it.copy(
+                        serverDiagnostic = diagnostic,
+                        status = if (diagnostic.success) "Serveur OK" else "Erreur serveur",
+                        error = if (diagnostic.success) null else diagnostic.message
+                    )
+                }
+            } finally {
+                RemoteActionGuard.release(REMOTE_LABEL_SERVER_DIAGNOSTIC)
+            }
+        }
     }
 
     private fun refreshSelectedPlaybackState() {
@@ -751,7 +1062,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 state.copy(
                     selectedResumePositionMs = resumePosition,
                     selectedDownloaded = localSize >= 0L,
-                    selectedSizeBytes = if (localSize >= 0L) localSize else state.selectedSizeBytes
+                    selectedSizeBytes = if (localSize >= 0L) localSize else state.selectedSizeBytes,
+                    playbackRevision = state.playbackRevision + 1L
                 )
             }
         }
@@ -968,7 +1280,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun clearCatalogCache() {
         stateStore.clearCatalogCaches()
         _uiState.update {
-            it.copy(status = "Cache catalogue vidé", error = null)
+            it.copy(
+                status = "Cache catalogue vidé",
+                error = null,
+                catalogDiagnostics = stateStore.catalogDiagnostics()
+            )
         }
     }
 
@@ -1011,27 +1327,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadMovieDetail(item: XtreamModels.StreamItem) {
+        stateStore.cachedItemDetail(item, MOVIE_DETAIL_TTL_MS)?.let { cached ->
+            applyMovieDetail(item, cached.detail)
+            if (!cached.isFresh) {
+                refreshMovieDetail(item, reportBusy = false, reportFailure = false)
+            }
+            return
+        }
+        refreshMovieDetail(item, reportBusy = true, reportFailure = true)
+    }
+
+    private fun loadLiveEpg(item: XtreamModels.StreamItem) {
+        val cached = stateStore.cachedEpg(item, EPG_TTL_MS)
+        if (cached.isNotEmpty()) {
+            applyLiveEpg(item, cached)
+            return
+        }
         val api = api ?: return
-        prioritizeUserRemoteAction()
+        if (!RemoteActionGuard.tryAcquire(REMOTE_LABEL_EPG)) {
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val programs = withContext(Dispatchers.IO) { api.getShortEpg(item.id, EPG_PROGRAM_LIMIT) }
+                withContext(Dispatchers.IO) { stateStore.saveEpg(item, programs) }
+                applyLiveEpg(item, programs)
+            } catch (_: Exception) {
+            } finally {
+                RemoteActionGuard.release(REMOTE_LABEL_EPG)
+            }
+        }
+    }
+
+    private fun applyLiveEpg(item: XtreamModels.StreamItem, programs: List<XtreamModels.EpgProgram>) {
+        _uiState.update {
+            if (it.selectedItem?.key() == item.key()) {
+                it.copy(selectedEpg = programs)
+            } else {
+                it
+            }
+        }
+    }
+
+    private fun refreshMovieDetail(
+        item: XtreamModels.StreamItem,
+        reportBusy: Boolean,
+        reportFailure: Boolean
+    ) {
+        val api = api ?: return
+        if (reportBusy) {
+            prioritizeUserRemoteAction()
+        }
         if (!RemoteActionGuard.tryAcquire(RemoteLabels.MOVIE_DETAIL)) {
-            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Fiche film")) }
+            if (reportBusy) {
+                _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Fiche film")) }
+            }
             return
         }
         viewModelScope.launch {
             try {
                 val detail = withContext(Dispatchers.IO) { api.getMovieDetail(item.id) }
-                _uiState.update {
-                    val ratedItem = item.withRating(detail.rating)
-                    val rows = rowsWithRating(it.rows, item, detail.rating)
-                    it.copy(
-                        rows = rows,
-                        searchIndex = it.searchIndexFor(rows),
-                        selectedItem = if (it.selectedItem?.key() == item.key()) ratedItem else it.selectedItem,
-                        selectedDetail = detail
-                    )
-                }
+                withContext(Dispatchers.IO) { stateStore.saveItemDetail(item, detail) }
+                applyMovieDetail(item, detail)
             } catch (exception: Exception) {
-                _uiState.update { it.copy(error = "Détails indisponibles: ${exception.message}") }
+                if (reportFailure) {
+                    _uiState.update { it.copy(error = "Détails indisponibles: ${exception.message}") }
+                }
             } finally {
                 RemoteActionGuard.release(RemoteLabels.MOVIE_DETAIL)
             }
@@ -1039,48 +1400,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadSeries(item: XtreamModels.StreamItem) {
+        stateStore.cachedSeriesInfo(item, SERIES_DETAIL_TTL_MS)?.let { cached ->
+            applySeriesInfo(item, cached.info)
+            if (!cached.isFresh) {
+                refreshSeriesInfo(item, reportBusy = false, reportFailure = false)
+            }
+            return
+        }
+        refreshSeriesInfo(item, reportBusy = true, reportFailure = true)
+    }
+
+    private fun refreshSeriesInfo(
+        item: XtreamModels.StreamItem,
+        reportBusy: Boolean,
+        reportFailure: Boolean
+    ) {
         val api = api ?: return
-        prioritizeUserRemoteAction()
+        if (reportBusy) {
+            prioritizeUserRemoteAction()
+        }
         if (!RemoteActionGuard.tryAcquire(RemoteLabels.SERIES_DETAIL)) {
-            _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Fiche série")) }
+            if (reportBusy) {
+                _uiState.update { it.copy(error = UserFacingMessages.remoteBusy("Fiche série")) }
+            }
             return
         }
         viewModelScope.launch {
             try {
                 val info = withContext(Dispatchers.IO) { api.getSeriesInfo(item.id) }
-                _uiState.update { it.copy(seriesInfo = info, selectedDetail = info.detail) }
+                withContext(Dispatchers.IO) { stateStore.saveSeriesInfo(item, info) }
+                applySeriesInfo(item, info)
             } catch (exception: Exception) {
-                _uiState.update { it.copy(error = "Série indisponible: ${exception.message}") }
+                if (reportFailure) {
+                    _uiState.update { it.copy(error = "Série indisponible: ${exception.message}") }
+                }
             } finally {
                 RemoteActionGuard.release(RemoteLabels.SERIES_DETAIL)
             }
         }
     }
 
-    private fun fetchRows(api: XtreamApi, mode: Mode): List<XtreamModels.ContentRow> {
-        val rows = mutableListOf<XtreamModels.ContentRow>()
-        when (mode) {
-            Mode.LIVE -> {
-                for (category in api.getLiveCategories()) {
-                    val items = firstItems(api.getLiveStreams(category.id), 40)
-                    if (items.isNotEmpty()) rows.add(XtreamModels.ContentRow(category.name, items))
-                }
+    private fun applyMovieDetail(item: XtreamModels.StreamItem, detail: XtreamModels.ItemDetail) {
+        _uiState.update {
+            if (it.selectedItem?.key() != item.key()) {
+                it
+            } else {
+                val ratedItem = item.withRating(detail.rating)
+                val rows = rowsWithRating(it.rows, item, detail.rating)
+                it.copy(
+                    rows = rows,
+                    searchIndex = it.searchIndexFor(rows),
+                    selectedItem = ratedItem,
+                    selectedDetail = detail
+                )
             }
-            Mode.MOVIES -> {
-                for (category in api.getMovieCategories()) {
-                    val items = api.getMovieStreams(category.id).filter { item -> item.playable }
-                    if (items.isNotEmpty()) rows.add(XtreamModels.ContentRow(category.name, items))
-                }
-            }
-            Mode.SERIES -> {
-                for (category in api.getSeriesCategories()) {
-                    val items = api.getSeriesStreams(category.id)
-                    if (items.isNotEmpty()) rows.add(XtreamModels.ContentRow(category.name, items))
-                }
-            }
-            Mode.FAVORITES, Mode.DOWNLOADS -> Unit
         }
-        return rows
+    }
+
+    private fun applySeriesInfo(item: XtreamModels.StreamItem, info: XtreamModels.SeriesInfo) {
+        _uiState.update {
+            if (it.selectedItem?.key() == item.key()) {
+                it.copy(seriesInfo = info, selectedDetail = info.detail)
+            } else {
+                it
+            }
+        }
     }
 
     private fun favoriteRows(): List<XtreamModels.ContentRow> {
@@ -1098,11 +1482,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return if (premiumRows.isEmpty()) rows else premiumRows + rows
     }
 
+    private fun withHistoryRow(mode: Mode, indexedRows: IndexedCatalogRows): IndexedCatalogRows {
+        val premiumRows = premiumRows(mode, indexedRows.rows)
+        if (premiumRows.isEmpty()) {
+            return indexedRows
+        }
+        val premiumIndex = CatalogSearchIndex.fromRows(premiumRows)
+        return IndexedCatalogRows(
+            rows = premiumRows + indexedRows.rows,
+            searchIndex = CatalogSearchIndex.fromRowEntries(
+                premiumIndex.rowEntries + indexedRows.searchIndex.rowEntries
+            )
+        )
+    }
+
     private fun premiumRows(mode: Mode, rows: List<XtreamModels.ContentRow>): List<XtreamModels.ContentRow> {
         val allItems = rows
+            .filter { row -> premiumRowKind(row.title) == null }
             .flatMap { row -> row.items.map { item -> row.title to item } }
             .distinctBy { (_, item) -> item.key() }
         val history = historyForMode(mode)
+        val recommendations = recommendationsForMode(mode, allItems, history)
         val favorites = stateStore.favorites()
             .filter { favorite -> allItems.any { (_, item) -> item.key() == favorite.key() } }
         val fourK = allItems
@@ -1119,13 +1519,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .take(20)
 
         return buildList {
+            addPremiumRow(PremiumRowKind.HISTORY, historyRowTitle(mode), history)
+            addPremiumRow(PremiumRowKind.RECOMMENDED, recommendationRowTitle(mode), recommendations)
             addPremiumRow(PremiumRowKind.RECENT, "Ajoutés récemment", recent)
-            addPremiumRow(PremiumRowKind.HISTORY, "Continuer à regarder", history)
             addPremiumRow(PremiumRowKind.FAVORITES, "Mes favoris", favorites)
             addPremiumRow(PremiumRowKind.FOUR_K, "Sélection 4K", fourK)
             addPremiumRow(PremiumRowKind.TOP_RATED, "Top notes du mois", topRatedMonth)
             addPremiumRow(PremiumRowKind.TOP_RATED, "Top notes 6 derniers mois", topRatedSixMonths)
         }
+    }
+
+    private fun recommendationsForMode(
+        mode: Mode,
+        allItems: List<Pair<String, XtreamModels.StreamItem>>,
+        history: List<XtreamModels.StreamItem>
+    ): List<XtreamModels.StreamItem> {
+        if (mode != Mode.MOVIES && mode != Mode.SERIES) {
+            return emptyList()
+        }
+        val watchedKeys = history.map { item -> item.key() }.toSet()
+        val watchedCategories = history.map { item -> item.categoryId }.filter { value -> value.isNotBlank() }.toSet()
+        val watchedRows = allItems
+            .filter { (_, item) -> item.key() in watchedKeys || item.categoryId in watchedCategories }
+            .map { (rowTitle, _) -> rowTitle }
+            .toSet()
+        return allItems
+            .asSequence()
+            .filter { (_, item) -> item.key() !in watchedKeys }
+            .map { (rowTitle, item) ->
+                RecommendedItem(
+                    item = item,
+                    score = recommendationScore(rowTitle, item, watchedRows, watchedCategories)
+                )
+            }
+            .filter { recommended -> recommended.score > 0f || watchedKeys.isEmpty() }
+            .sortedWith(
+                compareByDescending<RecommendedItem> { it.score }
+                    .thenByDescending { numericRating(it.item.rating) }
+                    .thenByDescending { addedEpochSeconds(it.item) }
+                    .thenBy { it.item.title.lowercase() }
+            )
+            .map { recommended -> recommended.item }
+            .take(RECOMMENDATION_ITEM_LIMIT)
+            .toList()
+    }
+
+    private fun recommendationScore(
+        rowTitle: String,
+        item: XtreamModels.StreamItem,
+        watchedRows: Set<String>,
+        watchedCategories: Set<String>
+    ): Float {
+        val rowScore = if (rowTitle in watchedRows) 60f else 0f
+        val categoryScore = if (item.categoryId.isNotBlank() && item.categoryId in watchedCategories) 45f else 0f
+        val ratingScore = numericRating(item.rating) * 4f
+        val recentScore = if (addedEpochSeconds(item) > 0L) 5f else 0f
+        return rowScore + categoryScore + ratingScore + recentScore
     }
 
     private fun topRatedSince(
@@ -1159,8 +1608,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ),
                 20
             )
-            Mode.LIVE, Mode.FAVORITES, Mode.DOWNLOADS -> emptyList()
+            Mode.LIVE -> stateStore.history(setOf(XtreamModels.StreamItem.TYPE_LIVE), 20)
+            Mode.FAVORITES, Mode.DOWNLOADS -> emptyList()
         }
+
+    private fun historyRowTitle(mode: Mode): String =
+        if (mode == Mode.LIVE) "Dernières chaînes" else "Continuer à regarder"
+
+    private fun recommendationRowTitle(mode: Mode): String =
+        if (mode == Mode.SERIES) "Séries que vous pourriez aimer" else "Films que vous pourriez aimer"
 
     private fun MutableList<XtreamModels.ContentRow>.addPremiumRow(
         kind: PremiumRowKind,
@@ -1358,11 +1814,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
 }
 
-private data class IndexedCatalogRows(
-    val rows: List<XtreamModels.ContentRow>,
-    val searchIndex: CatalogSearchIndex
-)
-
 private sealed class DownloadWriteTarget {
     abstract val storedPath: String
     abstract fun length(): Long
@@ -1397,8 +1848,43 @@ private sealed class DownloadWriteTarget {
     }
 }
 
-private fun indexedRows(rows: List<XtreamModels.ContentRow>): IndexedCatalogRows =
-    IndexedCatalogRows(rows, CatalogSearchIndex.fromRows(rows))
+private data class CatalogControls(
+    val query: String,
+    val filter4k: Boolean,
+    val filterHighRating: Boolean,
+    val filterRecentYear: Boolean,
+    val sort: CatalogSort
+)
+
+private data class RecommendedItem(
+    val item: XtreamModels.StreamItem,
+    val score: Float
+)
+
+private fun MainUiState.catalogControls(): CatalogControls =
+    CatalogControls(
+        query = query,
+        filter4k = filter4k,
+        filterHighRating = filterHighRating,
+        filterRecentYear = filterRecentYear,
+        sort = catalogSort
+    )
+
+private fun Mode.isSqlCatalogMode(): Boolean =
+    this == Mode.LIVE || this == Mode.MOVIES || this == Mode.SERIES
+
+private fun categoryPreferenceKey(mode: Mode, rowTitle: String): String =
+    "${mode.name}|${displayRowTitle(rowTitle)}"
+
+private const val MOVIE_DETAIL_TTL_MS = 14L * 24L * 60L * 60L * 1000L
+private const val SERIES_DETAIL_TTL_MS = 7L * 24L * 60L * 60L * 1000L
+private const val EPG_TTL_MS = 30L * 60L * 1000L
+private const val EPG_PROGRAM_LIMIT = 4
+private const val NEXT_EPISODE_QUEUE_LIMIT = 24
+private const val CUSTOM_GROUP_ITEM_LIMIT = 240
+private const val RECOMMENDATION_ITEM_LIMIT = 20
+private const val REMOTE_LABEL_EPG = "EPG"
+private const val REMOTE_LABEL_SERVER_DIAGNOSTIC = "diagnostic serveur"
 
 private fun MainUiState.searchIndexFor(rows: List<XtreamModels.ContentRow>): CatalogSearchIndex =
     if (rows === this.rows) searchIndex else CatalogSearchIndex.fromRows(rows)

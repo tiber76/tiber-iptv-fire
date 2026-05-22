@@ -10,6 +10,7 @@ internal object RemoteLabels {
     const val MOVIE_DETAIL = "details film"
     const val SERIES_DETAIL = "details serie"
     const val SYNC_PREFIX = "synchronisation "
+    const val BACKGROUND_SYNC = "${SYNC_PREFIX}arrière-plan"
 
     fun sync(scope: String): String = "$SYNC_PREFIX$scope"
 }
@@ -42,6 +43,8 @@ internal object UserFacingMessages {
 internal object CacheDirectories {
     const val LEGACY_POSTERS = "posters"
     const val POSTERS = "posters-v2"
+    const val COIL_IMAGES = "coil-images"
+    const val HTTP = "http-cache"
     const val BUFFER = "tampon"
 }
 
@@ -66,4 +69,43 @@ internal object PlaybackPolicy {
     const val SEEK_SCRUB_MEDIUM_STEP_MS = 60_000L
     const val SEEK_SCRUB_FAST_STEP_MS = 5L * 60L * 1_000L
     const val SEEK_OVERLAY_HIDE_DELAY_MS = 1_200L
+
+    fun networkPolicy(itemType: String, liveFormat: String, bufferMs: Int): PlaybackNetworkPolicy {
+        if (itemType != XtreamModels.StreamItem.TYPE_LIVE) {
+            return PlaybackNetworkPolicy(
+                streamFormat = null,
+                fallbackFormat = null,
+                bufferMs = bufferMs,
+                retryOnAlternateLiveFormat = false
+            )
+        }
+        val fallbackFormat = if (liveFormat == "ts") "m3u8" else "ts"
+        return PlaybackNetworkPolicy(
+            streamFormat = liveFormat,
+            fallbackFormat = fallbackFormat,
+            bufferMs = bufferMs,
+            retryOnAlternateLiveFormat = true
+        )
+    }
+
+    fun libVlcOptions(bufferMs: Int): ArrayList<String> =
+        arrayListOf(
+            "--network-caching=$bufferMs",
+            "--clock-jitter=0",
+            "--audio-time-stretch",
+            "--avcodec-fast",
+            "--drop-late-frames",
+            "--skip-frames"
+        )
+
+    fun mediaOptions(bufferMs: Int, bufferedPlayback: Boolean): List<String> =
+        buildList {
+            add(":network-caching=$bufferMs")
+            if (bufferedPlayback) {
+                add(":file-caching=$bufferMs")
+                add(":no-input-fast-seek")
+            }
+            add(":http-reconnect")
+            add(":no-sub-autodetect-file")
+        }
 }

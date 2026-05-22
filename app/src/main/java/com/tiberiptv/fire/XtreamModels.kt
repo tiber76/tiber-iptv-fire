@@ -80,7 +80,8 @@ class XtreamModels private constructor() {
         @JvmField val contentRating: String,
         @JvmField val cast: String,
         @JvmField val director: String,
-        @JvmField val trailer: String
+        @JvmField val trailer: String,
+        @JvmField val backdropUrl: String = ""
     ) {
         fun hasContent(): Boolean =
             plot.isNotEmpty() ||

@@ -141,6 +141,9 @@ internal fun comparatorForSearchSort(
         CatalogSort.RATING -> compareByDescending<Pair<String, XtreamModels.StreamItem>> {
             numericRating(it.second.rating)
         }.thenBy { it.second.title.lowercase(Locale.US) }
+        CatalogSort.RESUME -> compareByDescending<Pair<String, XtreamModels.StreamItem>> { 0L }
+            .thenByDescending { it.second.addedTimestamp.toLongOrNull() ?: 0L }
+            .thenBy { it.second.title.lowercase(Locale.US) }
         CatalogSort.ALPHA -> compareBy { it.second.title.lowercase(Locale.US) }
     }
 
@@ -149,10 +152,22 @@ private data class SearchResult(
     val score: Int
 )
 
+internal data class IndexedCatalogRows(
+    val rows: List<XtreamModels.ContentRow>,
+    val searchIndex: CatalogSearchIndex
+)
+
 class CatalogSearchIndex private constructor(
     internal val rowEntries: List<CatalogRowEntries>,
     internal val entries: List<CatalogSearchEntry>
 ) {
+    internal fun ultraHdItemKeys(): Set<String> =
+        entries
+            .asSequence()
+            .filter { entry -> entry.ultraHd }
+            .map { entry -> entry.itemKey }
+            .toSet()
+
     companion object {
         val EMPTY = CatalogSearchIndex(emptyList(), emptyList())
 
@@ -198,6 +213,15 @@ class CatalogSearchIndex private constructor(
             }
             return CatalogSearchIndex(rowEntries, allEntries)
         }
+
+        internal fun fromRowEntries(rowEntries: List<CatalogRowEntries>): CatalogSearchIndex {
+            if (rowEntries.isEmpty()) {
+                return EMPTY
+            }
+            val allEntries = ArrayList<CatalogSearchEntry>(rowEntries.sumOf { row -> row.entries.size })
+            rowEntries.forEach { row -> allEntries.addAll(row.entries) }
+            return CatalogSearchIndex(rowEntries, allEntries)
+        }
     }
 }
 
@@ -218,7 +242,8 @@ internal data class CatalogSearchEntry(
     val addedTimestamp: Long,
     val rating: Float,
     val year: Int?,
-    val ultraHd: Boolean
+    val ultraHd: Boolean,
+    val resumePositionMs: Long = 0L
 )
 
 private fun combinedSearchText(
@@ -236,6 +261,40 @@ private fun combinedSearchText(
     appendSearchPart(output, extension)
     return output.toString()
 }
+
+internal fun catalogSearchEntry(
+    rowTitle: String,
+    item: XtreamModels.StreamItem
+): CatalogSearchEntry {
+    val visibleRowTitle = displayRowTitle(rowTitle)
+    val titleSearch = normalizeSearch(item.title)
+    val rowSearch = normalizeSearch(visibleRowTitle)
+    val categorySearch = normalizeSearch(item.categoryId)
+    val yearSearch = normalizeSearch(item.year)
+    val extensionSearch = normalizeSearch(item.extension)
+    return CatalogSearchEntry(
+        item = item,
+        itemKey = item.key(),
+        titleSearch = titleSearch,
+        rowSearch = rowSearch,
+        yearSearch = yearSearch,
+        combinedSearchText = combinedSearchText(
+            titleSearch,
+            rowSearch,
+            categorySearch,
+            yearSearch,
+            extensionSearch
+        ),
+        lowerTitle = item.title.lowercase(Locale.US),
+        addedTimestamp = item.addedTimestamp.toLongOrNull() ?: 0L,
+        rating = numericRating(item.rating),
+        year = item.year.toIntOrNull(),
+        ultraHd = isUltraHd(item, rowTitle)
+    )
+}
+
+internal fun indexedRows(rows: List<XtreamModels.ContentRow>): IndexedCatalogRows =
+    IndexedCatalogRows(rows, CatalogSearchIndex.fromRows(rows))
 
 private fun appendSearchPart(output: StringBuilder, value: String) {
     if (value.isBlank()) {
@@ -257,6 +316,10 @@ private fun comparatorForSearchResultSort(
         CatalogSort.RATING -> compareByDescending<SearchResult> {
             it.entry.rating
         }.thenBy { it.entry.lowerTitle }
+        CatalogSort.RESUME -> compareByDescending<SearchResult> {
+            it.entry.resumePositionMs
+        }.thenByDescending { it.entry.addedTimestamp }
+            .thenBy { it.entry.lowerTitle }
         CatalogSort.ALPHA -> compareBy { it.entry.lowerTitle }
     }
 
@@ -268,6 +331,11 @@ private fun Sequence<CatalogSearchEntry>.sortedForCatalog(sort: CatalogSort): Li
         )
         CatalogSort.RATING -> sortedWith(
             compareByDescending<CatalogSearchEntry> { it.rating }
+                .thenBy { it.lowerTitle }
+        )
+        CatalogSort.RESUME -> sortedWith(
+            compareByDescending<CatalogSearchEntry> { it.resumePositionMs }
+                .thenByDescending { it.addedTimestamp }
                 .thenBy { it.lowerTitle }
         )
         CatalogSort.ALPHA -> sortedBy { it.lowerTitle }
@@ -320,6 +388,11 @@ internal fun List<XtreamModels.StreamItem>.sortedForCatalog(sort: CatalogSort): 
         )
         CatalogSort.RATING -> sortedWith(
             compareByDescending<XtreamModels.StreamItem> { numericRating(it.rating) }
+                .thenBy { it.title.lowercase(Locale.US) }
+        )
+        CatalogSort.RESUME -> sortedWith(
+            compareByDescending<XtreamModels.StreamItem> { 0L }
+                .thenByDescending { it.addedTimestamp.toLongOrNull() ?: 0L }
                 .thenBy { it.title.lowercase(Locale.US) }
         )
         CatalogSort.ALPHA -> sortedBy { it.title.lowercase(Locale.US) }
@@ -394,6 +467,7 @@ internal fun resumeCardMeta(context: Context, item: XtreamModels.StreamItem): St
     val position = store.resumePosition(item)
     val duration = store.resumeDuration(item.key())
     return when {
+        duration > 0L && (position >= duration - 60_000L || position >= duration * 92L / 100L) -> "Vu"
         duration > position + 60_000L -> "Reste ${formatDurationLabel(duration - position)}"
         position > PlaybackPolicy.RESUME_THRESHOLD_MS -> "Reprendre à ${formatDurationLabel(position)}"
         else -> ""

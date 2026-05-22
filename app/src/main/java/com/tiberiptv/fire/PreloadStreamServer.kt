@@ -37,17 +37,36 @@ object PreloadStreamServer {
 
     @JvmStatic
     @Throws(Exception::class)
-    fun start(context: Context, remoteUrl: String, maxAheadBytes: Long): Session {
+    fun start(context: Context, remoteUrl: String, maxAheadBytes: Long): Session =
+        start(context, remoteUrl, maxAheadBytes, remoteStartBytes = 0L)
+
+    @JvmStatic
+    @Throws(Exception::class)
+    fun start(context: Context, remoteUrl: String, maxAheadBytes: Long, remoteStartBytes: Long): Session {
         if (RemoteActionGuard.activeLabel() != RemoteLabels.BUFFER) {
             throw IllegalStateException(UserFacingMessages.remoteGuardUnavailable("Préchargement"))
         }
+        return startSession(context, remoteUrl, maxAheadBytes, remoteStartBytes)
+    }
+
+    @JvmStatic
+    @Throws(Exception::class)
+    fun startFromPlayback(context: Context, remoteUrl: String, maxAheadBytes: Long, remoteStartBytes: Long): Session =
+        startSession(context, remoteUrl, maxAheadBytes, remoteStartBytes)
+
+    private fun startSession(
+        context: Context,
+        remoteUrl: String,
+        maxAheadBytes: Long,
+        remoteStartBytes: Long
+    ): Session {
         synchronized(staticLock) {
             stop()
             val dir = File(context.cacheDir, CacheDirectories.BUFFER)
             if (!dir.exists()) {
                 dir.mkdirs()
             }
-            val session = Session(remoteUrl, File(dir, "stream.part"), maxAheadBytes)
+            val session = Session(remoteUrl, File(dir, "stream.part"), maxAheadBytes, remoteStartBytes)
             session.start()
             current = session
             return session
@@ -101,7 +120,8 @@ object PreloadStreamServer {
     class Session(
         private val remoteUrl: String,
         private val cacheFile: File,
-        private val maxAheadBytes: Long
+        private val maxAheadBytes: Long,
+        private val remoteStartBytes: Long
     ) {
         private val lock = Object()
         private var serverSocket: ServerSocket? = null
@@ -238,11 +258,14 @@ object PreloadStreamServer {
                 connection.setRequestProperty("Accept", "*/*")
                 connection.setRequestProperty("Connection", "close")
                 connection.setRequestProperty("User-Agent", StreamNetwork.USER_AGENT)
+                if (remoteStartBytes > 0L) {
+                    connection.setRequestProperty("Range", "bytes=$remoteStartBytes-")
+                }
                 val code = connection.responseCode
                 if (code !in 200..299) {
                     throw IllegalStateException("HTTP $code")
                 }
-                totalBytes = connection.contentLengthLong
+                totalBytes = contentLengthFrom(connection, code)
                 BufferedInputStream(connection.inputStream).use { input ->
                     FileOutputStream(cacheFile).use { output ->
                         val buffer = ByteArray(BUFFER_SIZE)
@@ -333,8 +356,9 @@ object PreloadStreamServer {
                                 writeRangeUnavailable(output)
                                 return
                             }
-                            val serveOffset = if (rangeAllowed) offset else 0L
-                            writeHeaders(output, serveOffset, rangeAllowed)
+                            val serveOffset = if (rangeAllowed) offset - remoteStartBytes else 0L
+                            val responseOffset = if (rangeAllowed) offset else remoteStartBytes
+                            writeHeaders(output, serveOffset, responseOffset, rangeAllowed || remoteStartBytes > 0L)
                             if (!headRequest) {
                                 streamFromCache(output, serveOffset)
                             }
@@ -360,19 +384,26 @@ object PreloadStreamServer {
         }
 
         private fun canServeRange(offset: Long): Boolean =
-            (totalBytes <= 0L || offset < totalBytes) && (complete || offset <= safeSeekBytes())
+            offset >= remoteStartBytes &&
+                (totalBytes <= 0L || offset < totalBytes) &&
+                (complete || offset - remoteStartBytes <= safeSeekBytes())
 
         private fun safeSeekBytes(): Long =
             max(0L, downloadedBytes - StoragePolicy.BUFFER_SEEK_SAFETY_BYTES)
 
         @Throws(Exception::class)
-        private fun writeHeaders(output: OutputStream, offset: Long, rangeRequested: Boolean) {
+        private fun writeHeaders(
+            output: OutputStream,
+            localOffset: Long,
+            responseOffset: Long,
+            rangeRequested: Boolean
+        ) {
             val total = totalBytes
             val headers = StringBuilder()
             if (rangeRequested && total > 0L) {
                 headers.append("HTTP/1.1 206 Partial Content\r\n")
                 headers.append("Content-Range: bytes ")
-                    .append(offset)
+                    .append(responseOffset)
                     .append("-")
                     .append(total - 1L)
                     .append("/")
@@ -386,8 +417,10 @@ object PreloadStreamServer {
             if ((complete || safeSeekBytes() > 0L) && total > 0L) {
                 headers.append("Accept-Ranges: bytes\r\n")
             }
-            if (complete && total > 0L && offset < total) {
-                headers.append("Content-Length: ").append(total - offset).append("\r\n")
+            if (complete && total > 0L && responseOffset < total) {
+                headers.append("Content-Length: ").append(total - responseOffset).append("\r\n")
+            } else if (remoteStartBytes > 0L && total > remoteStartBytes + localOffset) {
+                headers.append("Content-Length: ").append(total - responseOffset).append("\r\n")
             }
             headers.append("\r\n")
             output.write(headers.toString().toByteArray())
@@ -416,6 +449,19 @@ object PreloadStreamServer {
                 path.endsWith(".ts") -> "video/mp2t"
                 else -> "application/octet-stream"
             }
+        }
+
+        private fun contentLengthFrom(connection: HttpURLConnection, code: Int): Long {
+            if (code == HttpURLConnection.HTTP_PARTIAL) {
+                val range = connection.getHeaderField("Content-Range").orEmpty()
+                val total = range.substringAfter('/', "").toLongOrNull()
+                if (total != null && total > 0L) {
+                    return total
+                }
+                val remaining = connection.contentLengthLong
+                return if (remaining > 0L) remoteStartBytes + remaining else -1L
+            }
+            return connection.contentLengthLong
         }
 
         @Throws(Exception::class)

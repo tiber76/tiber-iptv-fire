@@ -351,6 +351,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
             return false
         }
+        if (!automatic) {
+            preemptBackgroundCatalogSync()
+        }
         val label = RemoteLabels.sync(mode.label)
         if (!RemoteActionGuard.tryAcquire(label)) {
             if (!automatic) {
@@ -430,6 +433,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         } finally {
             RemoteActionGuard.release(label)
         }
+    }
+
+    private fun preemptBackgroundCatalogSync() {
+        if (RemoteActionGuard.activeLabel() != RemoteLabels.BACKGROUND_SYNC) {
+            return
+        }
+        CatalogSyncScheduler.preemptRunningBackgroundSync(appContext)
+        stateStore.markBackgroundSyncFailure("Interrompue par rechargement manuel")
     }
 
     private fun staleCatalogModes(snapshot: HomeResumeSnapshot): List<Mode> =

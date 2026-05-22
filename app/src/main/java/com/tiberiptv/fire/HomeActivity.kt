@@ -188,17 +188,46 @@ class HomeActivity : ComponentActivity() {
             remoteGuardLabel = RemoteLabels.PLAYBACK
         }
         stateStore.addHistory(item)
-        startActivity(
-            Intent(this, PlayerActivity::class.java)
-                .putExtra(PlayerActivity.EXTRA_URL, playbackUrl)
-                .putExtra(PlayerActivity.EXTRA_FALLBACK_URL, fallbackUrl)
-                .putExtra(PlayerActivity.EXTRA_TITLE, item.title)
-                .putExtra(PlayerActivity.EXTRA_ITEM_KEY, item.key())
-                .putExtra(PlayerActivity.EXTRA_RESUME_ENABLED, item.type != XtreamModels.StreamItem.TYPE_LIVE)
-                .putExtra(PlayerActivity.EXTRA_START_FROM_BEGINNING, false)
-                .putExtra(PlayerActivity.EXTRA_PRELOAD_PROXY, false)
-                .putExtra(PlayerActivity.EXTRA_REMOTE_GUARD_LABEL, remoteGuardLabel)
-        )
+        startPlayerFromHome(item, playbackUrl, fallbackUrl, remoteGuardLabel)
+    }
+
+    private fun startPlayerFromHome(
+        item: XtreamModels.StreamItem,
+        playbackUrl: String,
+        fallbackUrl: String,
+        remoteGuardLabel: String
+    ) {
+        val intent = Intent(this, PlayerActivity::class.java)
+            .putExtra(PlayerActivity.EXTRA_URL, playbackUrl)
+            .putExtra(PlayerActivity.EXTRA_FALLBACK_URL, fallbackUrl)
+            .putExtra(PlayerActivity.EXTRA_TITLE, item.title)
+            .putExtra(PlayerActivity.EXTRA_ITEM_KEY, item.key())
+            .putExtra(PlayerActivity.EXTRA_RESUME_ENABLED, item.type != XtreamModels.StreamItem.TYPE_LIVE)
+            .putExtra(PlayerActivity.EXTRA_START_FROM_BEGINNING, false)
+            .putExtra(PlayerActivity.EXTRA_PRELOAD_PROXY, false)
+            .putExtra(PlayerActivity.EXTRA_REMOTE_GUARD_LABEL, remoteGuardLabel)
+            .putExtra(PlayerActivity.EXTRA_SERIES_PREFERENCE_KEY, homeSeriesPreferenceKey(item))
+            .putExtra(PlayerActivity.EXTRA_NEXT_URL, "")
+            .putExtra(PlayerActivity.EXTRA_NEXT_FALLBACK_URL, "")
+            .putExtra(PlayerActivity.EXTRA_NEXT_TITLE, "")
+            .putExtra(PlayerActivity.EXTRA_NEXT_ITEM_KEY, "")
+            .putStringArrayListExtra(PlayerActivity.EXTRA_NEXT_URLS, arrayListOf())
+            .putStringArrayListExtra(PlayerActivity.EXTRA_NEXT_FALLBACK_URLS, arrayListOf())
+            .putStringArrayListExtra(PlayerActivity.EXTRA_NEXT_TITLES, arrayListOf())
+            .putStringArrayListExtra(PlayerActivity.EXTRA_NEXT_ITEM_KEYS, arrayListOf())
+        runCatching { startActivity(intent) }
+            .onFailure { error ->
+                RemoteActionGuard.release(remoteGuardLabel)
+                Toast.makeText(
+                    this,
+                    "Lecture impossible: ${error.message ?: error.javaClass.simpleName}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+    private fun homeSeriesPreferenceKey(item: XtreamModels.StreamItem): String {
+        return if (item.type == XtreamModels.StreamItem.TYPE_EPISODE) item.key() else ""
     }
 
     private fun openSettings() {
